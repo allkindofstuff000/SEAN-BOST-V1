@@ -1,0 +1,187 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #140303;
+  --card: rgba(33, 5, 5, 0.78);
+  --card2: rgba(55, 6, 6, 0.75);
+  --border: rgba(255, 75, 75, 0.35);
+  --accent: #ea2f2f;
+  --accent-strong: #ff4747;
+  --text: #ffe8e8;
+  --muted: rgba(255, 255, 255, 0.78);
+  --field: rgba(17, 4, 4, 0.78);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 14% 10%, rgba(255, 80, 80, 0.1), transparent 32%),
+    radial-gradient(circle at 86% 84%, rgba(255, 124, 77, 0.08), transparent 36%),
+    var(--bg);
+  overflow-x: hidden;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.bg-card {
+  background: linear-gradient(180deg, var(--card2), var(--card)) !important;
+}
+
+.bg-accent {
+  background: linear-gradient(180deg, var(--accent-strong), var(--accent)) !important;
+}
+
+.themeBorder {
+  border-color: var(--border) !important;
+}
+
+.themeMuted {
+  color: var(--muted);
+}
+
+.themeCard {
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: linear-gradient(180deg, var(--card2), var(--card));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+
+.themeSubCard {
+  border: 1px solid rgba(255, 75, 75, 0.26);
+  border-radius: 0.7rem;
+  background: rgba(42, 8, 8, 0.6);
+}
+
+.themePanelHeader {
+  background: rgba(65, 10, 10, 0.4);
+}
+
+.themeField {
+  background: var(--field);
+  border: 1px solid var(--border);
+  color: #fff;
+}
+
+.themeField:focus {
+  border-color: rgba(255, 117, 117, 0.72);
+}
+
+.themeBtnAccent {
+  border: 1px solid rgba(255, 117, 117, 0.7);
+  border-radius: 0.625rem;
+  background: linear-gradient(180deg, var(--accent-strong), var(--accent));
+  color: #fff;
+  font-weight: 600;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.themeBtnAccent:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 0 16px rgba(255, 72, 72, 0.25);
+}
+
+.themeBtnMuted {
+  border: 1px solid rgba(181, 190, 211, 0.38);
+  border-radius: 0.625rem;
+  background: linear-gradient(180deg, rgba(61, 68, 85, 0.82), rgba(42, 49, 65, 0.82));
+  color: #f7f9ff;
+  font-weight: 600;
+  transition: transform 0.18s ease, border-color 0.18s ease;
+}
+
+.themeBtnMuted:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(228, 236, 255, 0.56);
+}
+
+.themeBtnDanger {
+  border: 1px solid rgba(255, 109, 109, 0.6);
+  border-radius: 0.625rem;
+  background: linear-gradient(180deg, #cd3a3a, #a82727);
+  color: #fff;
+  font-weight: 600;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.themeBtnDanger:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 0 16px rgba(255, 72, 72, 0.2);
+}
+
+.pageShell {
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+}
+
+.pageInner {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.themeTabBar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 0.35rem;
+  background: linear-gradient(180deg, rgba(55, 6, 6, 0.45), rgba(33, 5, 5, 0.6));
+  overflow-x: auto;
+}
+
+.themeTab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.55rem 0.9rem 0.7rem;
+  border-radius: 0.55rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+  white-space: nowrap;
+  transition: color 0.18s ease, background-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.themeTab:hover {
+  color: #ffd7d1;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.themeTab.is-active {
+  color: #fff;
+  background: rgba(255, 71, 71, 0.12);
+  box-shadow: 0 0 0 1px rgba(255, 75, 75, 0.45), 0 0 18px rgba(255, 75, 75, 0.2);
+}
+
+.themeTab.is-active::after {
+  content: "";
+  position: absolute;
+  left: 14%;
+  right: 14%;
+  bottom: 5px;
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(0, 255, 157, 0.9);
+  box-shadow: 0 0 12px rgba(0, 255, 157, 0.45);
+}

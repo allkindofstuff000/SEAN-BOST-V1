@@ -1,0 +1,206 @@
+.add-account-page {
+  max-width: 1040px;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 0.95rem;
+}
+
+.add-account-breadcrumb {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.add-account-breadcrumb a {
+  color: var(--muted);
+  text-decoration: none;
+  transition: color 0.18s ease;
+}
+
+.add-account-breadcrumb a:hover {
+  color: #fff;
+}
+
+.add-account-breadcrumb .current {
+  color: #fff;
+}
+
+.add-account-title {
+  margin: 0;
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.add-account-subtitle {
+  margin: 0;
+  color: var(--muted);
+}
+
+.add-account-form {
+  display: grid;
+  gap: 1rem;
+}
+
+.add-card {
+  background: linear-gradient(180deg, var(--card2), var(--card));
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 1.1rem;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+
+.add-card h2 {
+  margin: 0 0 12px;
+  font-size: 1.05rem;
+  color: #ffe1e1;
+}
+
+.field-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field-block {
+  display: flex;
+  flex-direction: column;
+}
+
+.field-block label {
+  font-size: 13px;
+  margin-bottom: 6px;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.field-block input,
+.field-block select,
+.field-block textarea {
+  background: var(--field);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: #fff;
+  outline: none;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.field-block input:focus,
+.field-block select:focus,
+.field-block textarea:focus {
+  border-color: rgba(255, 117, 117, 0.72);
+  box-shadow: 0 0 0 1px rgba(255, 72, 72, 0.18);
+}
+
+.hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.64);
+}
+
+.field-error {
+  margin: 5px 0 0;
+  font-size: 12px;
+  color: #ff8f8f;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.group-label {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 14px 0 8px;
+}
+
+.chip-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.chip-row button {
+  border: 1px solid rgba(255, 75, 75, 0.4);
+  background: rgba(44, 10, 10, 0.68);
+  color: #f2d4d4;
+  border-radius: 999px;
+  font-size: 12px;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: border-color 0.18s ease, transform 0.18s ease;
+}
+
+.chip-row button:hover {
+  border-color: rgba(255, 117, 117, 0.72);
+  transform: translateY(-1px);
+}
+
+.limit-card p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.form-error {
+  margin: 0;
+  color: #ff8d8d;
+}
+
+.form-success {
+  margin: 0;
+  color: #8df2a4;
+}
+
+.actions-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.btn-cancel,
+.btn-primary {
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 16px;
+  color: #fff;
+  cursor: pointer;
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.btn-cancel {
+  border: 1px solid rgba(181, 190, 211, 0.38);
+  background: linear-gradient(180deg, rgba(61, 68, 85, 0.82), rgba(42, 49, 65, 0.82));
+}
+
+.btn-cancel:hover {
+  transform: translateY(-1px);
+  border-color: rgba(228, 236, 255, 0.56);
+}
+
+.btn-primary {
+  border: 1px solid rgba(255, 117, 117, 0.7);
+  background: linear-gradient(180deg, var(--accent-strong), var(--accent));
+  font-weight: 700;
+}
+
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 0 16px rgba(255, 72, 72, 0.25);
+}
+
+.btn-primary:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+@media (max-width: 860px) {
+  .field-grid {
+    grid-template-columns: 1fr;
+  }
+}

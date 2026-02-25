@@ -1,0 +1,63 @@
+.systemStatusBar {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.35rem 1.25rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 59, 59, 0.32);
+  background: linear-gradient(90deg, rgba(31, 4, 4, 0.94), rgba(44, 6, 6, 0.94), rgba(31, 4, 4, 0.94));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 0 12px rgba(255, 59, 59, 0.25);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.76rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+
+.systemStatusBar::-webkit-scrollbar {
+  height: 4px;
+}
+
+.systemStatusBar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+}
+
+.statusSegment {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  text-shadow: 0 0 8px rgba(255, 59, 59, 0.28);
+}
+
+.statusLive {
+  font-weight: 700;
+}
+
+.statusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.statusDot.connected {
+  background: #22e36e;
+  box-shadow: 0 0 9px rgba(34, 227, 110, 0.8);
+}
+
+.statusDot.disconnected {
+  background: #ff6a6a;
+  box-shadow: 0 0 9px rgba(255, 106, 106, 0.7);
+}
+
+.statusDivider {
+  opacity: 0.55;
+}
+
+@media (max-width: 840px) {
+  .systemStatusBar {
+    font-size: 0.72rem;
+    padding: 0.3rem 0.85rem;
+  }
+}

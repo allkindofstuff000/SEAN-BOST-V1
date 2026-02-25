@@ -1,0 +1,260 @@
+.accountRow {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: 0.75rem;
+  align-items: flex-start;
+  padding: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.accountRowCell {
+  min-width: 0;
+}
+
+.accountRowCell::before {
+  display: none;
+}
+
+.actionWrap {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.cyber-icon-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cyber-icon-btn:hover {
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
+.cyber-icon-btn:active {
+  transform: scale(0.96);
+}
+
+.cyber-icon-btn.disabled,
+.cyber-icon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.actionIcon {
+  width: 19px;
+  height: 19px;
+}
+
+.actionStart {
+  color: var(--cy-green);
+}
+
+.actionRestart {
+  color: var(--cy-orange);
+}
+
+.actionView {
+  color: var(--cy-blue);
+}
+
+.actionEdit {
+  color: var(--cy-yellow);
+}
+
+.actionDelete {
+  color: var(--cy-red);
+}
+
+.shieldBtn img {
+  width: 20px;
+  height: 20px;
+  image-rendering: crisp-edges;
+  filter: drop-shadow(0 0 8px rgba(0, 207, 255, 0.62));
+}
+
+.syncPill {
+  margin-top: 0.25rem;
+  font-size: 11px;
+  color: var(--cy-yellow);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.statusBadge {
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  font-size: 11px;
+  text-transform: capitalize;
+  border: 1px solid transparent;
+}
+
+.status-running {
+  background: rgba(0, 255, 157, 0.16);
+  color: #b8ffe7;
+  border-color: rgba(0, 255, 157, 0.4);
+  box-shadow: 0 0 7px rgba(0, 255, 157, 0.25);
+}
+
+.status-stopped {
+  background: rgba(148, 163, 184, 0.18);
+  color: #dbe6f3;
+  border-color: rgba(148, 163, 184, 0.3);
+}
+
+.status-crashed,
+.status-error,
+.status-verification_failed,
+.status-2fa_failed {
+  background: rgba(255, 59, 59, 0.2);
+  color: #ffd4d4;
+  border-color: rgba(255, 59, 59, 0.44);
+}
+
+.status-awaiting_2fa,
+.status-awaiting_verification_code,
+.status-needs2fa {
+  background: rgba(0, 207, 255, 0.16);
+  color: #d8f8ff;
+  border-color: rgba(0, 207, 255, 0.45);
+}
+
+.status-default {
+  background: rgba(100, 116, 139, 0.2);
+  border-color: rgba(100, 116, 139, 0.3);
+}
+
+.nextBumpTime {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: rgba(220, 235, 255, 0.92);
+}
+
+.countdownValue {
+  font-variant-numeric: tabular-nums;
+  color: #9cfdd7;
+}
+
+.dueBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.14rem 0.55rem;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #d8fff3;
+  background: rgba(0, 255, 170, 0.18);
+  border: 1px solid rgba(0, 255, 170, 0.45);
+  box-shadow: 0 0 10px rgba(0, 255, 170, 0.3);
+}
+
+.nextProgressWrap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.nextProgressTrack {
+  position: relative;
+  width: 100%;
+  min-width: 92px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(25, 40, 56, 0.88);
+  border: 1px solid rgba(43, 64, 87, 0.95);
+  overflow: hidden;
+}
+
+.nextProgressFill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #00ffd0 0%, #8bff86 100%);
+  box-shadow:
+    0 0 9px rgba(0, 255, 208, 0.75),
+    0 0 18px rgba(0, 255, 208, 0.35);
+  transition: width 0.9s linear;
+}
+
+.nextProgressPercent {
+  font-size: 11px;
+  color: rgba(205, 233, 255, 0.9);
+  min-width: 36px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+  .accountTableHeader {
+    display: none !important;
+  }
+
+  .accountTableBulk {
+    align-items: stretch;
+  }
+
+  .accountTableActions {
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .accountTableStats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .accountTableStats span {
+    margin-right: 0 !important;
+  }
+
+  .accountRow {
+    display: flex;
+    flex-direction: column;
+    gap: 0.52rem;
+    padding: 0.8rem;
+    margin: 0.7rem;
+    border: 1px solid rgba(255, 75, 75, 0.35);
+    border-radius: 0.75rem;
+    background: rgba(24, 6, 6, 0.68);
+  }
+
+  .accountRowCell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .accountRowCell::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 0.66rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    font-weight: 700;
+    opacity: 0.62;
+  }
+
+  .accountRowActions {
+    padding-top: 0.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .actionWrap {
+    gap: 0.38rem;
+  }
+
+  .cyber-icon-btn {
+    width: 36px;
+    height: 36px;
+  }
+}

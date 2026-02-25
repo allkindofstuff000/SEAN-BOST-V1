@@ -1,0 +1,44 @@
+{
+  "name": "megaboost-backend",
+  "version": "1.0.0",
+  "description": "MegaBoost Backend API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "dev:backend": "node server.js",
+    "dev:frontend": "npm --prefix ../megaboost-dashboard run dev",
+    "dev:all": "concurrently -n backend,frontend -c green,blue \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "seed:bootstrap": "node scripts/seedAdminAndStarter.js",
+    "migrate:user-scope": "node scripts/migrateUserScope.js",
+    "smoke:api": "node scripts/smokeApi.js",
+    "socket:test": "node scripts/socket-test.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "compression": "^1.8.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "geoip-lite": "^1.4.10",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongodb": "^7.1.0",
+    "mongoose": "^7.6.3",
+    "proxy-chain": "^2.7.1",
+    "puppeteer": "^24.37.3",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "nodemon": "^3.1.11"
+  }
+}
