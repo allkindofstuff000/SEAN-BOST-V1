@@ -141,6 +141,18 @@ const MAX_CONCURRENCY = (() => {
   if (!Number.isFinite(parsed) || parsed < 1) return 8;
   return Math.floor(parsed);
 })();
+const RECOVERY_INTERVAL_MS = (() => {
+  const parsed = Number(process.env.WORKER_RECOVERY_INTERVAL_MS || 30000);
+  if (!Number.isFinite(parsed) || parsed < 0) return 30000;
+  return Math.floor(parsed);
+})();
+const STALE_START_RECOVERY_MS = (() => {
+  const parsed = Number(
+    process.env.WORKER_STALE_START_RECOVERY_MS || 2 * 60 * 1000
+  );
+  if (!Number.isFinite(parsed) || parsed < 0) return 2 * 60 * 1000;
+  return Math.floor(parsed);
+})();
 
 const runningWorkers = new Map();
 const startingLocks = new Set();
@@ -151,6 +163,8 @@ const stopRequests = new Set();
 const heartbeatDebugLastPrintedAt = new Map();
 const heartbeatByAccountId = new Map();
 let heartbeatSummaryTimer = null;
+let recoveryTimer = null;
+let recoveryInProgress = false;
 const WORKER_KEY_SEPARATOR = ":";
 
 // Pending verification sessions map
@@ -329,6 +343,28 @@ function startHeartbeatSummaryLogger() {
 }
 
 startHeartbeatSummaryLogger();
+
+function startRecoveryLoop() {
+  if (recoveryTimer || RECOVERY_INTERVAL_MS <= 0) {
+    return;
+  }
+
+  const runRecovery = () => {
+    recoverOverdueAccounts().catch((error) => {
+      console.error("[RECOVERY] Timer failed:", error.message);
+    });
+  };
+
+  recoveryTimer = setInterval(runRecovery, RECOVERY_INTERVAL_MS);
+  if (typeof recoveryTimer.unref === "function") {
+    recoveryTimer.unref();
+  }
+
+  const kickoffTimer = setTimeout(runRecovery, 5000);
+  if (typeof kickoffTimer.unref === "function") {
+    kickoffTimer.unref();
+  }
+}
 
 function clearPendingVerificationSession(accountId) {
   const key = String(accountId);
@@ -1588,6 +1624,9 @@ async function performFullLogin(page, account, verificationOptions = {}) {
     return false;
   } catch (error) {
     console.error(`[LOGIN] Failed for ${account.email}:`, error.message);
+    if (error?.stack) {
+      console.error(`[LOGIN] Stack for ${account.email}:\n${error.stack}`);
+    }
     try {
       const canScreenshot =
         page &&
@@ -3588,6 +3627,72 @@ async function requestStart(accountOrId, options = {}) {
   });
 }
 
+async function recoverOverdueAccounts() {
+  if (recoveryInProgress) {
+    return;
+  }
+  recoveryInProgress = true;
+
+  try {
+    const nowMs = Date.now();
+    const now = new Date(nowMs);
+    const staleStartCutoff = new Date(nowMs - STALE_START_RECOVERY_MS);
+
+    const candidates = await Account.find({
+      $or: [
+        {
+          status: "waiting_cooldown",
+          $or: [
+            { nextBumpAt: { $ne: null, $lte: now } },
+            { waitingUntil: { $ne: null, $lte: now } }
+          ]
+        },
+        {
+          status: { $in: ["starting", "restarting"] },
+          updatedAt: { $lte: staleStartCutoff }
+        }
+      ]
+    })
+      .select("_id email userId status nextBumpAt waitingUntil updatedAt workerState")
+      .lean();
+
+    for (const account of candidates) {
+      const accountId = normalizeAccountId(account);
+      const userId = normalizeUserId(account?.userId);
+
+      if (!accountId) continue;
+      if (account?.workerState?.blockedReason) continue;
+      if (hasRunningWorker(accountId, { userId }) || startingLocks.has(accountId)) {
+        continue;
+      }
+      if (isStopRequested(accountId)) continue;
+
+      const queueKey = buildWorkerKey(userId, accountId);
+      if (queuedAccounts.has(queueKey) || queuedAccounts.has(accountId)) {
+        continue;
+      }
+
+      const reason =
+        String(account?.status || "").toLowerCase() === "waiting_cooldown"
+          ? "cooldown overdue"
+          : "stale startup status";
+
+      console.log(
+        `[RECOVERY] Re-queueing ${account?.email || accountId} (${reason})`
+      );
+      requestStart(account, { userId }).catch((startError) => {
+        console.error(
+          `[RECOVERY] Failed to re-queue ${account?.email || accountId}:`,
+          startError.message
+        );
+      });
+    }
+  } catch (error) {
+    console.error("[RECOVERY] Overdue account recovery failed:", error.message);
+  } finally {
+    recoveryInProgress = false;
+  }
+}
 async function requestStop(accountId, options = {}) {
   const key = normalizeAccountId(accountId);
   if (!key) return;
@@ -4466,6 +4571,8 @@ async function handleDeviceVerification(page, account, options = {}) {
     return false;
   }
 }
+
+startRecoveryLoop();
 
 module.exports = {
   // Worker manager API
