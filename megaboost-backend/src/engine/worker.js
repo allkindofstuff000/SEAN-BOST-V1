@@ -1588,7 +1588,22 @@ async function performFullLogin(page, account, verificationOptions = {}) {
     return false;
   } catch (error) {
     console.error(`[LOGIN] Failed for ${account.email}:`, error.message);
-    await page.screenshot({ path: `login-error-${account.email}-${Date.now()}.png` });
+    try {
+      const canScreenshot =
+        page &&
+        (typeof page.isClosed !== "function" || !page.isClosed());
+
+      if (canScreenshot) {
+        await page.screenshot({
+          path: `login-error-${account.email}-${Date.now()}.png`
+        });
+      }
+    } catch (screenshotError) {
+      console.error(
+        `[LOGIN] Failed to save login error screenshot for ${account.email}:`,
+        screenshotError.message
+      );
+    }
     if (error?.type === "credentials_invalid") {
       throw error;
     }
@@ -4476,6 +4491,4 @@ module.exports = {
   handleDeviceVerification,
   clearPendingVerificationSession
 };
-
-
 
