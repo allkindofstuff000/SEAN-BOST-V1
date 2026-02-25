@@ -532,6 +532,28 @@ function normalizeAccountId(accountOrId) {
   return String(accountOrId._id || accountOrId.id || "");
 }
 
+function normalizeCredentialValue(value) {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return String(value);
+}
+
+function resolveLoginCredentials(account) {
+  const email = normalizeCredentialValue(account?.email).trim();
+  const password = normalizeCredentialValue(account?.password);
+  if (!email || !password) {
+    const accountId = normalizeAccountId(account) || "unknown";
+    throw createWorkerError(
+      "credentials_invalid",
+      `Missing login credentials for account ${accountId}`
+    );
+  }
+  return { email, password };
+}
 function getSafePageUrl(page) {
   try {
     if (!page || typeof page.isClosed !== "function" || page.isClosed()) {
@@ -1421,6 +1443,7 @@ async function clickLoginSubmitFallback(page) {
 }
 
 async function submitLoginAttempt(page, account) {
+  const { email, password } = resolveLoginCredentials(account);
   const { element: emailInput } = await findFirstElement(page, LOGIN_SELECTORS.email, {
     timeout: 20000
   });
@@ -1438,11 +1461,11 @@ async function submitLoginAttempt(page, account) {
 
   await emailInput.click({ clickCount: 3 });
   await page.keyboard.press("Backspace");
-  await emailInput.type(account.email, { delay: 50 });
+  await emailInput.type(email, { delay: 50 });
 
   await passwordInput.click({ clickCount: 3 });
   await page.keyboard.press("Backspace");
-  await passwordInput.type(account.password, { delay: 50 });
+  await passwordInput.type(password, { delay: 50 });
   console.log("[LOGIN] Credentials filled");
 
   const { element: captchaElement } = await findFirstElement(
@@ -1624,9 +1647,7 @@ async function performFullLogin(page, account, verificationOptions = {}) {
     return false;
   } catch (error) {
     console.error(`[LOGIN] Failed for ${account.email}:`, error.message);
-    if (error?.stack) {
-      console.error(`[LOGIN] Stack for ${account.email}:\n${error.stack}`);
-    }
+
     try {
       const canScreenshot =
         page &&
@@ -3550,17 +3571,14 @@ async function requestStart(accountOrId, options = {}) {
 
   clearStopRequest(accountId);
 
-  const account =
-    typeof accountOrId === "object" && accountOrId?._id
-      ? accountOrId
-      : await Account.findOne(
-          scopedUserId
-            ? {
-                _id: accountId,
-                userId: scopedUserId
-              }
-            : { _id: accountId }
-        );
+  const account = await Account.findOne(
+    scopedUserId
+      ? {
+          _id: accountId,
+          userId: scopedUserId
+        }
+      : { _id: accountId }
+  );
 
   if (!account) return;
   const accountUserId = normalizeUserId(account.userId);
@@ -3805,17 +3823,14 @@ async function restartAccount(accountOrId, options = {}) {
       ? Math.floor(stopTimeoutMsRaw)
       : 5000;
 
-  const account =
-    typeof accountOrId === "object" && accountOrId?._id
-      ? accountOrId
-      : await Account.findOne(
-          scopedUserId
-            ? {
-                _id: accountId,
-                userId: scopedUserId
-              }
-            : { _id: accountId }
-        );
+  const account = await Account.findOne(
+    scopedUserId
+      ? {
+          _id: accountId,
+          userId: scopedUserId
+        }
+      : { _id: accountId }
+  );
   if (!account) {
     return null;
   }
