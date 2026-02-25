@@ -3659,7 +3659,7 @@ async function recoverOverdueAccounts() {
     const candidates = await Account.find({
       $or: [
         {
-          status: "waiting_cooldown",
+          status: { $in: ["waiting_cooldown", "bumping", "active", "running"] },
           $or: [
             { nextBumpAt: { $ne: null, $lte: now } },
             { waitingUntil: { $ne: null, $lte: now } }
@@ -3690,10 +3690,13 @@ async function recoverOverdueAccounts() {
         continue;
       }
 
-      const reason =
-        String(account?.status || "").toLowerCase() === "waiting_cooldown"
-          ? "cooldown overdue"
-          : "stale startup status";
+      const status = String(account?.status || "").toLowerCase();
+      let reason = "stale startup status";
+      if (status === "waiting_cooldown") {
+        reason = "cooldown overdue";
+      } else if (status === "bumping" || status === "active" || status === "running") {
+        reason = "scheduled run overdue";
+      }
 
       console.log(
         `[RECOVERY] Re-queueing ${account?.email || accountId} (${reason})`
