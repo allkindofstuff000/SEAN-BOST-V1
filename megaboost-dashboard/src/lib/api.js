@@ -320,18 +320,20 @@ export async function applyBumpPreset(
 }
 
 export async function getTelegramSettings(options = {}) {
-  const res = await api.get("/api/settings/telegram", options);
+  const res = await api.get("/api/admin/telegram", options);
   return res.data;
 }
 
 export async function updateTelegramSettings(payload, options = {}) {
-  const res = await api.put("/api/settings/telegram", payload, options);
+  const res = await api.post("/api/admin/telegram", payload, options);
   return res.data;
 }
 
 export async function testTelegramSettings(options = {}) {
-  const res = await api.post("/api/settings/telegram/test", {}, options);
-  return res.data;
+  const res = await api.get("/api/admin/telegram", options);
+  return {
+    ok: Boolean(res.data?.enabled && res.data?.chatId && res.data?.hasTokenConfigured)
+  };
 }
 
 export async function adminGetOverview(options = {}) {
@@ -373,3 +375,4 @@ export async function adminUpdateUser(id, payload, options = {}) {
 
 export { isRetryableError };
 export default api;
+

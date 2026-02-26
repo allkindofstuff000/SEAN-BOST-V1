@@ -20,7 +20,7 @@ export default function Settings() {
   const [telegramSettings, setTelegramSettings] = useState({
     enabled: false,
     chatId: "",
-    tokenMasked: ""
+    hasTokenConfigured: false
   });
   const [loadingTelegram, setLoadingTelegram] = useState(true);
   const [telegramError, setTelegramError] = useState("");
@@ -35,7 +35,7 @@ export default function Settings() {
       setTelegramSettings({
         enabled: Boolean(settings?.enabled),
         chatId: String(settings?.chatId || ""),
-        tokenMasked: String(settings?.tokenMasked || "")
+        hasTokenConfigured: Boolean(settings?.hasTokenConfigured)
       });
     } catch (error) {
       setTelegramError(
@@ -53,7 +53,7 @@ export default function Settings() {
   }, [loadTelegramSettings]);
 
   const isConfigured = useMemo(
-    () => Boolean(telegramSettings.enabled && telegramSettings.chatId),
+    () => Boolean(telegramSettings.enabled && telegramSettings.chatId && telegramSettings.hasTokenConfigured),
     [telegramSettings]
   );
 
@@ -105,7 +105,7 @@ export default function Settings() {
           </div>
 
           <p className="mb-2 text-sm opacity-70">
-            Configure bot token and chat ID
+            Configure chat and command access (token comes from env)
           </p>
 
           {loadingTelegram ? (
@@ -113,7 +113,7 @@ export default function Settings() {
           ) : (
             <div className="mb-4 space-y-1 text-xs opacity-80">
               <div>Chat ID: {telegramSettings.chatId || "Not set"}</div>
-              <div>Token: {telegramSettings.tokenMasked || "Not configured"}</div>
+              <div>Token: {telegramSettings.hasTokenConfigured ? "Configured (env)" : "Not configured"}</div>
               <div>Status: {telegramSettings.enabled ? "Enabled" : "Disabled"}</div>
             </div>
           )}
@@ -158,8 +158,8 @@ export default function Settings() {
 
             <StatusRow
               label="Telegram Bot:"
-              value={telegramSettings.enabled ? "Configured" : "Not Configured"}
-              success={telegramSettings.enabled}
+              value={isConfigured ? "Configured" : "Not Configured"}
+              success={isConfigured}
             />
             <StatusRow
               label="Chat ID:"
@@ -168,7 +168,7 @@ export default function Settings() {
             />
             <InfoRow
               label="Token:"
-              value={telegramSettings.tokenMasked || "Not configured"}
+              value={telegramSettings.hasTokenConfigured ? "Configured (env)" : "Not configured"}
             />
           </div>
         </div>
@@ -225,7 +225,7 @@ export default function Settings() {
           setTelegramSettings({
             enabled: Boolean(updated?.enabled),
             chatId: String(updated?.chatId || ""),
-            tokenMasked: String(updated?.tokenMasked || "")
+            hasTokenConfigured: Boolean(updated?.hasTokenConfigured)
           });
         }}
         showToast={showToast}
@@ -276,3 +276,4 @@ function StatusRow({ label, value, success }) {
     </div>
   );
 }
+

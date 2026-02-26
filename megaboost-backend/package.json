@@ -13,7 +13,8 @@
     "migrate:user-scope": "node scripts/migrateUserScope.js",
     "smoke:api": "node scripts/smokeApi.js",
     "socket:test": "node scripts/socket-test.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start:telegram": "node src/telegram/controlProcessEntry.js"
   },
   "keywords": [],
   "author": "",
@@ -30,6 +31,7 @@
     "jsonwebtoken": "^9.0.3",
     "mongodb": "^7.1.0",
     "mongoose": "^7.6.3",
+    "node-telegram-bot-api": "^0.66.0",
     "proxy-chain": "^2.7.1",
     "puppeteer": "^24.37.3",
     "puppeteer-extra": "^3.3.6",
@@ -42,3 +44,4 @@
     "nodemon": "^3.1.11"
   }
 }
+
