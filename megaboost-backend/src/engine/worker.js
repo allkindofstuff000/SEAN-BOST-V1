@@ -155,6 +155,7 @@ const STALE_START_RECOVERY_MS = (() => {
 })();
 
 const runningWorkers = new Map();
+const accountRuntimeRegistry = new Map();
 const startingLocks = new Set();
 const startQueue = [];
 const queuedAccounts = new Set();
@@ -246,21 +247,205 @@ function getRunningWorkerEntry(accountOrId, options = {}) {
 function setRunningWorker(account, worker, extra = {}) {
   const accountId = normalizeAccountId(account);
   if (!accountId) return "";
+
   const userId = normalizeUserId(account?.userId);
   const workerKey = buildWorkerKey(userId, accountId);
+  const proxyIp = normalizeProxyIp(resolveProxyLabel(account, extra?.proxyIp || ""));
+  const email = String(account?.email || "").trim();
+
+  const stopBumping = async (reason = "") => {
+    await requestStop(accountId, {
+      userId,
+      ip: extra?.ip || "",
+      reason: String(reason || `ip_blocked:${proxyIp || "unknown"}`),
+      timeoutMs: 5000,
+      forceClearStopRequest: true
+    });
+  };
+
   runningWorkers.set(workerKey, {
     worker,
     accountId,
     userId,
     ...extra
   });
+
+  accountRuntimeRegistry.set(workerKey, {
+    accountId,
+    userId,
+    email,
+    proxyIp,
+    status: "running",
+    stopBumping,
+    startedAt: Number(extra?.startedAt || Date.now()),
+    lastUpdatedAt: Date.now()
+  });
+
   return workerKey;
 }
 
 function deleteRunningWorker(accountOrId, options = {}) {
   const key = findRunningWorkerKey(accountOrId, options);
   if (!key) return false;
-  return runningWorkers.delete(key);
+
+  const deleted = runningWorkers.delete(key);
+  const existing = accountRuntimeRegistry.get(key);
+  if (existing) {
+    const nextStatus = String(options?.nextStatus || existing.status || "stopped")
+      .trim()
+      .toLowerCase();
+    accountRuntimeRegistry.set(key, {
+      ...existing,
+      status: nextStatus === "blocked" ? "blocked" : "stopped",
+      stopBumping: null,
+      lastUpdatedAt: Date.now()
+    });
+  }
+
+  return deleted;
+}
+
+function normalizeProxyIp(proxyIp) {
+  const value = String(proxyIp || "").trim();
+  if (!value || value.toLowerCase() === "unknown") {
+    return "";
+  }
+  return value;
+}
+
+function findAccountRegistryEntry(accountOrId, options = {}) {
+  const accountId = normalizeAccountId(accountOrId);
+  if (!accountId) return null;
+
+  const scopedUserId = normalizeUserId(
+    options?.userId ||
+      (typeof accountOrId === "object" && accountOrId ? accountOrId.userId : "")
+  );
+
+  if (scopedUserId) {
+    const scopedKey = buildWorkerKey(scopedUserId, accountId);
+    if (scopedKey && accountRuntimeRegistry.has(scopedKey)) {
+      return {
+        key: scopedKey,
+        entry: accountRuntimeRegistry.get(scopedKey)
+      };
+    }
+  }
+
+  for (const [key, entry] of accountRuntimeRegistry.entries()) {
+    if (String(entry?.accountId || "") !== accountId) {
+      continue;
+    }
+
+    if (scopedUserId && normalizeUserId(entry?.userId) !== scopedUserId) {
+      continue;
+    }
+
+    return {
+      key,
+      entry
+    };
+  }
+
+  return null;
+}
+
+function upsertAccountRegistryEntry(accountOrId, patch = {}, options = {}) {
+  const accountId = normalizeAccountId(accountOrId);
+  if (!accountId) return null;
+
+  const requestedUserId = normalizeUserId(
+    options?.userId ||
+      patch?.userId ||
+      (typeof accountOrId === "object" && accountOrId ? accountOrId.userId : "")
+  );
+
+  const existingRef = findAccountRegistryEntry(accountOrId, { userId: requestedUserId });
+  const existing = existingRef?.entry || {};
+  const userId = requestedUserId || normalizeUserId(existing?.userId);
+  const registryKey = existingRef?.key || buildWorkerKey(userId, accountId) || accountId;
+
+  const statusValue = String(patch?.status || existing?.status || "stopped")
+    .trim()
+    .toLowerCase();
+  const nextStatus =
+    statusValue === "running" || statusValue === "blocked" ? statusValue : "stopped";
+
+  const hasStopBumpingPatch = Object.prototype.hasOwnProperty.call(patch, "stopBumping");
+  const resolvedProxyIp = normalizeProxyIp(
+    patch?.proxyIp ||
+      existing?.proxyIp ||
+      (typeof accountOrId === "object" ? resolveProxyLabel(accountOrId, "") : "")
+  );
+
+  const nextEntry = {
+    ...existing,
+    accountId,
+    userId,
+    email: String(
+      patch?.email ||
+        existing?.email ||
+        (typeof accountOrId === "object" ? accountOrId?.email || "" : "")
+    ).trim(),
+    proxyIp: resolvedProxyIp,
+    status: nextStatus,
+    stopBumping: hasStopBumpingPatch ? patch.stopBumping : existing?.stopBumping || null,
+    lastUpdatedAt: Date.now()
+  };
+
+  accountRuntimeRegistry.set(registryKey, nextEntry);
+  return {
+    key: registryKey,
+    entry: nextEntry
+  };
+}
+
+function listRunningRegistryEntriesByProxy(proxyIp, options = {}) {
+  const targetProxyIp = normalizeProxyIp(proxyIp);
+  if (!targetProxyIp) return [];
+
+  const excludeAccountId = normalizeAccountId(options?.excludeAccountId || "");
+  const matches = [];
+
+  for (const [key, entry] of accountRuntimeRegistry.entries()) {
+    if (!entry) continue;
+
+    const status = String(entry.status || "").trim().toLowerCase();
+    if (status !== "running") {
+      continue;
+    }
+
+    const entryProxyIp = normalizeProxyIp(entry.proxyIp);
+    if (!entryProxyIp || entryProxyIp !== targetProxyIp) {
+      continue;
+    }
+
+    const entryAccountId = String(entry.accountId || "");
+    if (excludeAccountId && entryAccountId === excludeAccountId) {
+      continue;
+    }
+
+    matches.push({
+      key,
+      ...entry
+    });
+  }
+
+  return matches;
+}
+
+function toShutdownAccountPayload(entry) {
+  return {
+    accountId: String(entry?.accountId || ""),
+    email: String(entry?.email || "").trim() || undefined,
+    proxyIp: normalizeProxyIp(entry?.proxyIp || ""),
+    status: "stopped",
+    userId: normalizeUserId(entry?.userId)
+  };
+}
+
+function buildIpBlockedStopReason(proxyIp, triggerAccountId) {
+  return `ip_blocked_shutdown:${proxyIp || "unknown"}:trigger:${triggerAccountId}`;
 }
 
 function getRunningAccountIds(options = {}) {
@@ -908,6 +1093,176 @@ async function updateWorkerState(accountId, workerStatePatch = {}, accountPatch 
 
 function emitAccountUpdate(accountOrId, patch = {}, extra = {}, userId = "") {
   emitAccountUpdateEvent(accountOrId, patch, extra, userId).catch(() => null);
+}
+
+async function handleAccountBlocked(accountId) {
+  const blockedAccountId = normalizeAccountId(accountId);
+  if (!blockedAccountId) {
+    return {
+      event: "ip-blocked-shutdown",
+      ip: "",
+      stoppedAccounts: []
+    };
+  }
+
+  // Resolve the blocked account and the proxy IP that triggered the block.
+  let blockedRef = findAccountRegistryEntry(blockedAccountId);
+  let blockedUserId = normalizeUserId(blockedRef?.entry?.userId || "");
+
+  if (!blockedRef?.entry?.proxyIp) {
+    const blockedAccount = await Account.findById(blockedAccountId)
+      .select("_id userId email proxyHost proxyPort")
+      .lean()
+      .catch(() => null);
+
+    if (blockedAccount) {
+      blockedUserId = normalizeUserId(blockedAccount.userId);
+      blockedRef = upsertAccountRegistryEntry(
+        blockedAccount,
+        {
+          status: "blocked",
+          proxyIp: resolveProxyLabel(blockedAccount, "")
+        },
+        {
+          userId: blockedUserId
+        }
+      );
+    }
+  }
+
+  const blockedProxyIp = normalizeProxyIp(blockedRef?.entry?.proxyIp || "");
+  upsertAccountRegistryEntry(
+    {
+      _id: blockedAccountId,
+      userId: blockedUserId,
+      email: blockedRef?.entry?.email || ""
+    },
+    {
+      status: "blocked",
+      proxyIp: blockedProxyIp
+    },
+    {
+      userId: blockedUserId
+    }
+  );
+
+  if (!blockedProxyIp) {
+    console.warn(
+      `[IP-BLOCK] Skipping propagation for account ${blockedAccountId}: proxy IP is missing.`
+    );
+    return {
+      event: "ip-blocked-shutdown",
+      ip: "",
+      stoppedAccounts: []
+    };
+  }
+
+  // Collect all currently running peers on the same proxy IP.
+  const peers = listRunningRegistryEntriesByProxy(blockedProxyIp, {
+    excludeAccountId: blockedAccountId
+  });
+
+  if (peers.length === 0) {
+    console.warn(
+      `[IP-BLOCK] No running peers found on proxy ${blockedProxyIp}. triggerAccount=${blockedAccountId}`
+    );
+    return {
+      event: "ip-blocked-shutdown",
+      ip: blockedProxyIp,
+      stoppedAccounts: []
+    };
+  }
+
+  const stopReason = buildIpBlockedStopReason(blockedProxyIp, blockedAccountId);
+  const stoppedAccounts = [];
+
+  // Gracefully stop all running accounts that share the blocked proxy IP.
+  for (const peer of peers) {
+    try {
+      if (typeof peer.stopBumping === "function") {
+        await peer.stopBumping(stopReason);
+      } else {
+        await requestStop(peer.accountId, {
+          userId: peer.userId,
+          reason: stopReason,
+          timeoutMs: 5000,
+          forceClearStopRequest: true
+        });
+      }
+
+      upsertAccountRegistryEntry(
+        {
+          _id: peer.accountId,
+          userId: peer.userId,
+          email: peer.email || ""
+        },
+        {
+          status: "stopped",
+          stopBumping: null,
+          proxyIp: blockedProxyIp
+        },
+        {
+          userId: peer.userId
+        }
+      );
+
+      const stoppedPayload = toShutdownAccountPayload(peer);
+      stoppedAccounts.push(stoppedPayload);
+
+      console.warn(
+        `[IP-BLOCK] Stopped account ${peer.email || peer.accountId} on ${blockedProxyIp} (trigger ${blockedAccountId}).`
+      );
+
+      await logActivity({
+        level: "warning",
+        message: `IP-triggered shutdown | ${peer.email || peer.accountId} | proxy ${blockedProxyIp}`,
+        ip: blockedProxyIp,
+        email: peer.email,
+        accountId: peer.accountId,
+        metadata: {
+          reason: "ip_blocked_shutdown",
+          triggerAccountId: blockedAccountId,
+          proxy: blockedProxyIp
+        }
+      }).catch(() => null);
+    } catch (error) {
+      console.error(
+        `[IP-BLOCK] Failed stopping account ${peer.accountId} on ${blockedProxyIp}:`,
+        error?.message || error
+      );
+    }
+  }
+
+  const socketPayload = {
+    event: "ip-blocked-shutdown",
+    ip: blockedProxyIp,
+    stoppedAccounts: stoppedAccounts.map(({ userId, ...rest }) => rest)
+  };
+
+  // Emit to each impacted user room so dashboards update in real time.
+  const impactedUserIds = new Set(
+    stoppedAccounts
+      .map((item) => normalizeUserId(item.userId))
+      .filter(Boolean)
+  );
+
+  for (const userId of impactedUserIds) {
+    const userStoppedAccounts = stoppedAccounts
+      .filter((item) => normalizeUserId(item.userId) === userId)
+      .map(({ userId: _userId, ...rest }) => rest);
+
+    await emitToUserEvent(userId, "ip-blocked-shutdown", {
+      event: "ip-blocked-shutdown",
+      ip: blockedProxyIp,
+      stoppedAccounts: userStoppedAccounts
+    }).catch(() => null);
+  }
+
+  console.warn(
+    `[IP-BLOCK] Proxy shutdown complete ip=${blockedProxyIp} stopped=${stoppedAccounts.length}`
+  );
+
+  return socketPayload;
 }
 
 function buildPendingConnectionTest(connectionTest) {
@@ -3155,7 +3510,7 @@ async function handleWorkerFailure(account, error, options = {}) {
         }
       : { _id: accountId }
   )
-    .select("email autoRestartCrashed workerState")
+    .select("email userId proxyHost proxyPort autoRestartCrashed workerState")
     .lean();
   if (!latest) return;
   const email = latest?.email || account.email;
@@ -3275,6 +3630,12 @@ async function handleWorkerFailure(account, error, options = {}) {
       }
     );
     await updateStatus(accountId, "blocked", { ip, email }).catch(() => null);
+    await handleAccountBlocked(accountId).catch((propagationError) => {
+      console.error(
+        `[IP-BLOCK] Propagation failed for account ${accountId}:`,
+        propagationError?.message || propagationError
+      );
+    });
     console.error(
       "[WORKER] Account blocked after 5 failures. Manual restart required."
     );
@@ -3740,6 +4101,7 @@ async function requestStop(accountId, options = {}) {
   }
   const effectiveUserId = normalizeUserId(latestAccount?.userId || scopedUserId);
   const email = latestAccount?.email || String(options?.email || key);
+  const stopReason = String(options?.reason || "").trim();
   const timeoutMsRaw = Number(options?.timeoutMs);
   const timeoutMs =
     Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0
@@ -3786,10 +4148,17 @@ async function requestStop(accountId, options = {}) {
   await updateStatus(key, "stopped", { ip, email }).catch(() => null);
   await logActivity({
     level: "warning",
-    message: `🛑 Worker stopped | ${email}`,
+    message: stopReason
+      ? `Worker stopped | ${email} | reason: ${stopReason}`
+      : `Worker stopped | ${email}`,
     ip,
     email,
-    accountId: key
+    accountId: key,
+    metadata: stopReason
+      ? {
+          reason: stopReason
+        }
+      : undefined
   }).catch(() => null);
   emitAccountUpdate(
     latestAccount || key,
@@ -3803,6 +4172,22 @@ async function requestStop(accountId, options = {}) {
     {},
     effectiveUserId
   );
+
+  upsertAccountRegistryEntry(
+    {
+      _id: key,
+      userId: effectiveUserId,
+      email
+    },
+    {
+      status: "stopped",
+      stopBumping: null
+    },
+    {
+      userId: effectiveUserId
+    }
+  );
+
   await processQueue();
 }
 
@@ -4614,6 +4999,7 @@ module.exports = {
   testProxyNavigation,
   submitVerificationCode,
   handleDeviceVerification,
-  clearPendingVerificationSession
+  clearPendingVerificationSession,
+  handleAccountBlocked
 };
 
