@@ -88,6 +88,9 @@ function normalizeAccountPayload(payload, options = {}) {
   if (!isUpdate || hasField("timezone")) {
     data.timezone = data.timezone ? String(data.timezone).trim() : "";
   }
+  if (!isUpdate || hasField("runtimeWindow")) {
+    data.runtimeWindow = data.runtimeWindow ? String(data.runtimeWindow).trim() : "";
+  }
 
   if (hasField("screenWidth") && data.screenWidth !== undefined && data.screenWidth !== null && data.screenWidth !== "") {
     data.screenWidth = Number(data.screenWidth);
@@ -127,15 +130,15 @@ function normalizeAccountPayload(payload, options = {}) {
   return data;
 }
 
-function validateAccountPayload(data) {
-  const runtimeWindowPattern = /^([01]\d|2[0-3]):([0-5]\d)-([01]\d|2[0-3]):([0-5]\d)$/;
-  const supportedProxyTypes = new Set(["http", "socks5"]);
+const RUNTIME_WINDOW_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)-([01]\d|2[0-3]):([0-5]\d)$/;
+const SUPPORTED_PROXY_TYPES = new Set(["http", "socks5"]);
 
+function validateAccountPayload(data) {
   if (!data.email) return "Email is required";
   if (!data.password || String(data.password).length < 6) {
     return "Password must be at least 6 characters";
   }
-  if (!supportedProxyTypes.has(String(data.proxyType || ""))) {
+  if (!SUPPORTED_PROXY_TYPES.has(String(data.proxyType || ""))) {
     return "Proxy type must be either http or socks5";
   }
   if (!data.proxyHost) return "Proxy host is required";
@@ -177,8 +180,84 @@ function validateAccountPayload(data) {
   ) {
     return "Screen height must be between 600 and 2160";
   }
-  if (!runtimeWindowPattern.test(String(data.runtimeWindow || ""))) {
+  if (!RUNTIME_WINDOW_PATTERN.test(String(data.runtimeWindow || ""))) {
     return "Runtime window must be in HH:MM-HH:MM format";
+  }
+
+  return null;
+}
+
+function validateAccountUpdatePayload(patch = {}) {
+  const hasField = (key) => Object.prototype.hasOwnProperty.call(patch, key);
+
+  if (hasField("runtimeWindow") && !RUNTIME_WINDOW_PATTERN.test(String(patch.runtimeWindow || ""))) {
+    return "Runtime window must be in HH:MM-HH:MM format";
+  }
+
+  if (hasField("proxyType") && !SUPPORTED_PROXY_TYPES.has(String(patch.proxyType || ""))) {
+    return "Proxy type must be either http or socks5";
+  }
+
+  if (hasField("proxyPort")) {
+    const proxyPort = Number(patch.proxyPort);
+    if (!Number.isFinite(proxyPort) || proxyPort < 1 || proxyPort > 65535) {
+      return "Proxy port must be between 1 and 65535";
+    }
+  }
+
+  if (hasField("baseInterval")) {
+    const value = Number(patch.baseInterval);
+    if (!Number.isFinite(value) || value < 1 || value > 1440) {
+      return "Base interval must be between 1 and 1440 minutes";
+    }
+  }
+
+  if (hasField("maxDailyBumps")) {
+    const value = Number(patch.maxDailyBumps);
+    if (!Number.isFinite(value) || value < 1 || value > 500) {
+      return "Max daily bumps must be between 1 and 500";
+    }
+  }
+
+  if (hasField("maxDailyRuntime")) {
+    const value = Number(patch.maxDailyRuntime);
+    if (!Number.isFinite(value) || value < 1 || value > 24) {
+      return "Max daily runtime must be between 1 and 24 hours";
+    }
+  }
+
+  if (hasField("randomMin")) {
+    const value = Number(patch.randomMin);
+    if (!Number.isFinite(value) || value < 0) {
+      return "Random range is invalid";
+    }
+  }
+
+  if (hasField("randomMax")) {
+    const value = Number(patch.randomMax);
+    if (!Number.isFinite(value) || value < 0) {
+      return "Random range is invalid";
+    }
+  }
+
+  if (hasField("randomMin") && hasField("randomMax")) {
+    if (Number(patch.randomMax) < Number(patch.randomMin)) {
+      return "Random range is invalid";
+    }
+  }
+
+  if (hasField("screenWidth") && patch.screenWidth !== "") {
+    const value = Number(patch.screenWidth);
+    if (!Number.isFinite(value) || value < 800 || value > 3840) {
+      return "Screen width must be between 800 and 3840";
+    }
+  }
+
+  if (hasField("screenHeight") && patch.screenHeight !== "") {
+    const value = Number(patch.screenHeight);
+    if (!Number.isFinite(value) || value < 600 || value > 2160) {
+      return "Screen height must be between 600 and 2160";
+    }
   }
 
   return null;
@@ -574,6 +653,14 @@ exports.submitTwoFactor = async (req, res) => {
 exports.updateAccount = async (req, res) => {
   try {
     const payload = normalizeAccountPayload(req.body, { isUpdate: true });
+    const validationError = validateAccountUpdatePayload(payload);
+    if (validationError) {
+      return res.status(400).json({
+        success: false,
+        message: validationError
+      });
+    }
+
     const account = await Account.findOneAndUpdate(
       getScopedFilter(req, { _id: req.params.id }),
       payload,

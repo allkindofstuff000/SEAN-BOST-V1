@@ -3222,7 +3222,7 @@ async function startWorker(account, options = {}) {
       const proxyLabel = resolveProxyLabel(account, ip);
       await logActivity({
         level: "success",
-        message: `✅ Account started | ${account.email}`,
+        message: `\u2705 Account started | ${account.email}`,
         ip,
         email: account.email,
         accountId: account._id,
@@ -3233,7 +3233,7 @@ async function startWorker(account, options = {}) {
 
       await logActivity({
         level: "success",
-        message: `🌐 Proxy used | ${account.email} | proxy ${proxyLabel}`,
+        message: `\uD83C\uDF10 Proxy used | ${account.email} | proxy ${proxyLabel}`,
         ip,
         email: account.email,
         accountId: account._id,
@@ -3412,7 +3412,7 @@ async function startWorker(account, options = {}) {
 
     await logActivity({
       level: "success",
-      message: `✅ Login success | ${account.email}`,
+      message: `\u2705 Login success | ${account.email}`,
       ip,
       email: account.email,
       accountId: account._id,
@@ -3441,7 +3441,7 @@ async function startWorker(account, options = {}) {
     if (loginFailureTypes.has(normalizedError.type)) {
       await logActivity({
         level: "error",
-        message: `❌ Login failed | ${account.email} | reason: ${toShortReason(
+        message: `\u274C Login failed | ${account.email} | reason: ${toShortReason(
           normalizedError.message,
           "unknown"
         )}`,
@@ -3641,7 +3641,7 @@ async function handleWorkerFailure(account, error, options = {}) {
     );
     await logActivity({
       level: "error",
-      message: `💥 Worker crashed | ${email} | blocked after ${failureCount} failures`,
+      message: `\uD83D\uDCA5 Worker crashed | ${email} | blocked after ${failureCount} failures`,
       ip,
       email,
       accountId,
@@ -3680,7 +3680,7 @@ async function handleWorkerFailure(account, error, options = {}) {
     });
     await logActivity({
       level: "warning",
-      message: `💥 Worker crashed | ${email} | auto-restart disabled`,
+      message: `\uD83D\uDCA5 Worker crashed | ${email} | auto-restart disabled`,
       ip,
       email,
       accountId,
@@ -3701,7 +3701,7 @@ async function handleWorkerFailure(account, error, options = {}) {
 
   await logActivity({
     level: "warning",
-    message: `💥 Worker crashed | ${email} | restarting in ${retrySeconds} sec`,
+    message: `\uD83D\uDCA5 Worker crashed | ${email} | restarting in ${retrySeconds} sec`,
     ip,
     email,
     accountId,
@@ -3802,9 +3802,39 @@ async function startAccountInternal(account, options = {}) {
 
   try {
     if (!isWithinRuntimeWindow(account.runtimeWindow, account.timezone)) {
+      await updateWorkerState(
+        accountId,
+        {
+          nextRetryAt: null
+        },
+        {
+          status: "paused",
+          waitingUntil: null,
+          nextBumpAt: null,
+          nextBumpDelayMs: null,
+          cooldownMinutes: null,
+          lastCooldownDetected: null
+        }
+      ).catch(() => null);
+      await updateStatus(accountId, "paused", {
+        ip,
+        email: account.email
+      }).catch(() => null);
+      emitAccountUpdate(
+        account,
+        {
+          status: "paused",
+          waitingUntil: null,
+          nextBumpAt: null,
+          nextBumpDelayMs: null,
+          cooldownMinutes: null
+        },
+        {},
+        scopedUserId
+      );
       await logActivity({
         level: "warning",
-        message: `Start skipped outside runtime window: ${account.email}`,
+        message: `Start skipped outside runtime window: ${account.email} | window ${account.runtimeWindow || "n/a"}`,
         ip,
         email: account.email,
         accountId
@@ -4330,7 +4360,7 @@ async function restartAccount(accountOrId, options = {}) {
     });
     await logActivity({
       level: "error",
-      message: `💥 Worker crashed | ${email} | restart failed`,
+      message: `\uD83D\uDCA5 Worker crashed | ${email} | restart failed`,
       ip,
       email,
       accountId,
