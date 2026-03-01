@@ -95,4 +95,31 @@ router.post("/telegram/panel", async (_req, res) => {
   }
 });
 
+// Backward-compatibility for older dashboard clients using "Send Test".
+router.post("/telegram/test", async (_req, res) => {
+  try {
+    const result = await refreshTelegramPanel();
+
+    if (!result?.ok) {
+      return res.status(400).json({
+        ok: false,
+        message: "Telegram bot is not configured",
+        ...result
+      });
+    }
+
+    return res.status(200).json({
+      ok: true,
+      message: "Telegram panel refreshed",
+      messageId: result.messageId || null,
+      settings: result.settings || null
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      message: error?.message || "Failed to test Telegram settings"
+    });
+  }
+});
+
 module.exports = router;
