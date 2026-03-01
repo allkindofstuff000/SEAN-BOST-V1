@@ -1,4 +1,4 @@
-# MegaBoost Backend
+﻿# MegaBoost Backend
 
 Backend API and worker runtime for MegaBoost.
 
@@ -38,37 +38,49 @@ PROCESS_ROLE=api node src/telegram/controlProcessEntry.js
 
 ## Telegram Control
 
-Telegram control is env-token based and only supports existing account control:
+Telegram control uses one group panel message and only pause/resume actions.
 
-- `/status`
-- `/pause all`
-- `/resume all`
-- `/pause <email>`
-- `/resume <email>`
-- `/help`
+Group commands:
 
-Required env vars:
+- `/start` or `/panel` -> create/update one control panel message in the configured group
+
+Panel buttons (inline keyboard only):
+
+- `Pause` (`pause_one`)
+- `Resume` (`resume_one`)
+- `Pause all` (`pause_all`)
+- `Resume all` (`resume_all`)
+
+Single-account actions open an inline account picker (first 10 accounts), then execute:
+
+- `pause:{accountId}`
+- `resume:{accountId}`
+
+Settings are stored in MongoDB collection `TelegramSettings`:
+
+- `botToken`
+- `chatId`
+- `panelMessageId`
+- `updatedAt`
+
+Security and behavior:
+
+- Bot accepts actions only from the configured `chatId`.
+- Other chats get `Not authorized.`.
+- Callback actions use a 2-second per-chat cooldown.
+- Panel message is edited in-place (no message spam), and stats refresh after each action.
+
+API endpoints:
+
+- `GET /api/settings/telegram`
+- `POST /api/settings/telegram` with `{ botToken, chatId }`
+- `POST /api/settings/telegram/panel` (force panel refresh)
+
+Telegram process:
 
 ```bash
-TELEGRAM_BOT_TOKEN=...
-TELEGRAM_CHAT_ID=-5119592058
-TELEGRAM_ENABLED=true
-TELEGRAM_DEFAULT_USER=dulceva
-TELEGRAM_ADMIN_USERNAMES=dulceva
-# or TELEGRAM_ADMIN_IDS=123456789
+PROCESS_ROLE=api node src/telegram/controlProcessEntry.js
 ```
-
-Notes:
-
-- Token is read only from env (`TELEGRAM_BOT_TOKEN`) and is not stored in DB.
-- Commands are accepted only from the configured `TELEGRAM_CHAT_ID` and authorized users.
-- Account scope is restricted to `TELEGRAM_DEFAULT_USER`.
-- Basic anti-spam is enabled: max 5 commands per 10 seconds per sender.
-
-Dashboard endpoints:
-
-- `GET /api/admin/telegram` -> `{ enabled, chatId, hasTokenConfigured }`
-- `POST /api/admin/telegram` with `{ enabled, chatId }`
 
 PM2 example:
 
