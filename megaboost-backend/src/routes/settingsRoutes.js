@@ -11,9 +11,20 @@ function hasOwn(payload, key) {
   return Object.prototype.hasOwnProperty.call(payload || {}, key);
 }
 
-router.get("/telegram", async (_req, res) => {
+function getRequestUserId(req) {
+  return String(req.user?._id || "").trim();
+}
+
+router.get("/telegram", async (req, res) => {
   try {
-    const settings = await getOrCreateTelegramSettings();
+    const userId = getRequestUserId(req);
+    if (!userId) {
+      return res.status(401).json({
+        message: "Authentication required"
+      });
+    }
+
+    const settings = await getOrCreateTelegramSettings(userId);
     return res.status(200).json(buildSettingsPublicPayload(settings));
   } catch (error) {
     return res.status(500).json({
@@ -24,7 +35,14 @@ router.get("/telegram", async (_req, res) => {
 
 async function saveTelegramSettings(req, res) {
   try {
-    const settings = await getOrCreateTelegramSettings();
+    const userId = getRequestUserId(req);
+    if (!userId) {
+      return res.status(401).json({
+        message: "Authentication required"
+      });
+    }
+
+    const settings = await getOrCreateTelegramSettings(userId);
     const body = req.body || {};
 
     const hasBotToken = hasOwn(body, "botToken");
@@ -32,7 +50,6 @@ async function saveTelegramSettings(req, res) {
 
     const nextToken = hasBotToken ? String(body.botToken || "").trim() : String(settings.botToken || "").trim();
     const nextChatId = hasChatId ? String(body.chatId || "").trim() : String(settings.chatId || "").trim();
-    const nextUserId = String(req.user?._id || "").trim();
 
     if (nextToken && !isValidTelegramToken(nextToken)) {
       return res.status(400).json({
@@ -47,21 +64,12 @@ async function saveTelegramSettings(req, res) {
     }
 
     const previousChatId = String(settings.chatId || "").trim();
-    const previousUserId = String(settings.userId || "").trim();
 
     settings.botToken = nextToken;
     settings.chatId = nextChatId;
+    settings.userId = userId;
 
-    if (nextUserId) {
-      settings.userId = nextUserId;
-    }
-
-    if (
-      !nextToken ||
-      !nextChatId ||
-      previousChatId !== nextChatId ||
-      (nextUserId && previousUserId !== nextUserId)
-    ) {
+    if (!nextToken || !nextChatId || previousChatId !== nextChatId) {
       settings.panelMessageId = null;
     }
 
@@ -79,9 +87,17 @@ async function saveTelegramSettings(req, res) {
 router.post("/telegram", saveTelegramSettings);
 router.put("/telegram", saveTelegramSettings);
 
-async function handlePanelRefreshLike(_req, res) {
+async function handlePanelRefreshLike(req, res) {
   try {
-    const settings = await getOrCreateTelegramSettings();
+    const userId = getRequestUserId(req);
+    if (!userId) {
+      return res.status(401).json({
+        ok: false,
+        message: "Authentication required"
+      });
+    }
+
+    const settings = await getOrCreateTelegramSettings(userId);
     const payload = buildSettingsPublicPayload(settings);
 
     if (!payload.enabled) {

@@ -1,6 +1,6 @@
 const https = require("https");
 const AppSettings = require("../model/AppSettings");
-const { TelegramSettings, TELEGRAM_SETTINGS_ID } = require("../model/TelegramSettings");
+const { TelegramSettings } = require("../model/TelegramSettings");
 
 const TELEGRAM_TOKEN_REGEX = /^\d{6,}:[A-Za-z0-9_-]{20,}$/;
 const TELEGRAM_CHAT_ID_REGEX = /^-?\d+$/;
@@ -216,7 +216,7 @@ async function sendTelegramMessage(text, options = {}) {
     // Prefer scoped TelegramSettings credentials when this user owns Telegram panel config.
     // This keeps log notifications aligned with the latest dashboard Telegram setup.
     if (scopedUserId) {
-      const telegramSettings = await TelegramSettings.findById(TELEGRAM_SETTINGS_ID)
+      const telegramSettings = await TelegramSettings.findOne({ userId: scopedUserId })
         .select("botToken chatId userId")
         .lean()
         .catch(() => null);
@@ -327,9 +327,9 @@ function shouldSendLogToTelegram(log) {
 function formatTelegramLogMessage(log) {
   const level = normalizeString(log?.level).toLowerCase();
   const emojiByLevel = {
-    success: "✅",
-    warning: "⚠️",
-    error: "❌"
+    success: "âœ…",
+    warning: "âš ï¸",
+    error: "âŒ"
   };
   const message = normalizeString(log?.message);
 
@@ -338,7 +338,7 @@ function formatTelegramLogMessage(log) {
     return message;
   }
 
-  const prefix = emojiByLevel[level] || "ℹ️";
+  const prefix = emojiByLevel[level] || "â„¹ï¸";
   return `${prefix} ${message}`;
 }
 

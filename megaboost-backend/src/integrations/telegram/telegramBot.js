@@ -4,7 +4,7 @@ const User = require("../../model/User");
 const workerManager = require("../../engine/workerGateway");
 const { emitAccountUpdateEvent } = require("../../internal/eventBridge");
 const { isValidTelegramChatId, isValidTelegramToken, maskTelegramToken } = require("../../utils/telegram");
-const { TelegramSettings, TELEGRAM_SETTINGS_ID } = require("../../model/TelegramSettings");
+const { TelegramSettings } = require("../../model/TelegramSettings");
 const {
   buildPanelText,
   buildPanelKeyboard,
@@ -36,11 +36,8 @@ const DEFAULT_PANEL_USER_HANDLE =
   "seanmega";
 
 const runtime = {
-  bot: null,
-  token: "",
-  chatId: "",
-  refreshTimer: null,
-  actionCooldownByChatId: new Map()
+  botsByUserId: new Map(),
+  refreshTimer: null
 };
 
 function normalizeString(value) {
@@ -85,17 +82,17 @@ function isAuthorizedChat(chatId, settings) {
   return normalizeString(chatId) === normalizeString(settings?.chatId);
 }
 
-function consumeActionCooldown(chatId) {
+function consumeActionCooldown(cooldownByChatId, chatId) {
   const key = normalizeString(chatId);
   if (!key) return false;
 
   const now = Date.now();
-  const last = Number(runtime.actionCooldownByChatId.get(key) || 0);
+  const last = Number(cooldownByChatId.get(key) || 0);
   if (last > 0 && now - last < ACTION_COOLDOWN_MS) {
     return false;
   }
 
-  runtime.actionCooldownByChatId.set(key, now);
+  cooldownByChatId.set(key, now);
   return true;
 }
 
@@ -120,23 +117,39 @@ function isBannedStatus(status) {
   return BANNED_STATUS_SET.has(toLower(status));
 }
 
-async function getOrCreateTelegramSettings() {
-  return TelegramSettings.findByIdAndUpdate(
-    TELEGRAM_SETTINGS_ID,
-    {
-      $setOnInsert: {
-        _id: TELEGRAM_SETTINGS_ID,
-        botToken: "",
-        chatId: "",
-        panelMessageId: null,
-        userId: null
+async function getOrCreateTelegramSettings(userIdInput) {
+  const userId = normalizeString(userIdInput);
+  if (!userId) {
+    throw new Error("userId is required to load Telegram settings");
+  }
+
+  const runUpsert = () =>
+    TelegramSettings.findOneAndUpdate(
+      { userId },
+      {
+        $setOnInsert: {
+          userId,
+          botToken: "",
+          chatId: "",
+          panelMessageId: null
+        }
+      },
+      {
+        upsert: true,
+        new: true
       }
-    },
-    {
-      upsert: true,
-      new: true
-    }
-  );
+    );
+
+  return runUpsert();
+}
+
+async function listConfiguredTelegramSettings() {
+  return TelegramSettings.find({
+    userId: { $exists: true, $ne: null }
+  })
+    .select("userId botToken chatId panelMessageId updatedAt")
+    .sort({ updatedAt: -1, _id: -1 })
+    .lean();
 }
 
 function buildSettingsPublicPayload(settings) {
@@ -150,7 +163,7 @@ function buildSettingsPublicPayload(settings) {
     tokenMasked: maskTelegramToken(token),
     panelMessageId: Number(settings?.panelMessageId) || null,
     updatedAt: settings?.updatedAt || null,
-    userId: normalizeString(settings?.userId) || null
+    userId: getScopedUserId(settings) || null
   };
 }
 
@@ -283,8 +296,7 @@ async function safeAnswerCallback(bot, queryId, text) {
   }
 }
 
-async function upsertPanelMessage(settings, options = {}) {
-  const bot = runtime.bot;
+async function upsertPanelMessage(bot, settings, options = {}) {
   if (!bot) {
     return {
       ok: false,
@@ -512,8 +524,7 @@ async function resumeAllAccounts(settings) {
   return { resumed, alreadyRunning };
 }
 
-async function ensureAuthorizedSettings(chatId) {
-  const settings = await getOrCreateTelegramSettings();
+function ensureAuthorizedSettings(chatId, settings) {
   const token = normalizeString(settings?.botToken);
   const savedChatId = normalizeString(settings?.chatId);
 
@@ -550,18 +561,18 @@ async function ensureAuthorizedSettings(chatId) {
   };
 }
 
-async function handlePanelCommand(message) {
-  const bot = runtime.bot;
+async function handlePanelCommand(bot, message, userId) {
   if (!bot) return;
 
   const chatId = normalizeString(message?.chat?.id);
-  const auth = await ensureAuthorizedSettings(chatId);
+  const settings = await getOrCreateTelegramSettings(userId);
+  const auth = ensureAuthorizedSettings(chatId, settings);
   if (!auth.ok) {
     await bot.sendMessage(chatId, auth.message || "Not authorized.").catch(() => null);
     return;
   }
 
-  await upsertPanelMessage(auth.settings);
+  await upsertPanelMessage(bot, auth.settings);
 }
 
 function extractAccountAction(data) {
@@ -587,8 +598,7 @@ function extractAccountAction(data) {
   return null;
 }
 
-async function showAccountPicker(query, mode, settings) {
-  const bot = runtime.bot;
+async function showAccountPicker(bot, query, mode, settings) {
   const chatId = normalizeString(query?.message?.chat?.id);
   const messageId = Number(query?.message?.message_id || 0);
 
@@ -619,10 +629,7 @@ async function showAccountPicker(query, mode, settings) {
   }
 }
 
-async function handleAccountAction(query, action, settings) {
-  const bot = runtime.bot;
-  if (!bot) return;
-
+async function handleAccountAction(bot, query, action, settings) {
   const accountQuery = { _id: action.accountId };
   const scopedUserId = getScopedUserId(settings);
   if (scopedUserId) {
@@ -635,7 +642,7 @@ async function handleAccountAction(query, action, settings) {
 
   if (!account) {
     await safeAnswerCallback(bot, query.id, "Account not found.");
-    await upsertPanelMessage(settings);
+    await upsertPanelMessage(bot, settings);
     return;
   }
 
@@ -647,67 +654,71 @@ async function handleAccountAction(query, action, settings) {
     await safeAnswerCallback(bot, query.id, "\u2705 Resumed");
   }
 
-  await upsertPanelMessage(settings);
+  await upsertPanelMessage(bot, settings);
 }
 
-async function handleCallbackQuery(query) {
-  const bot = runtime.bot;
+async function handleCallbackQuery(bot, query, userId, cooldownByChatId) {
   if (!bot) return;
 
   const data = normalizeString(query?.data);
   const chatId = normalizeString(query?.message?.chat?.id);
 
-  const auth = await ensureAuthorizedSettings(chatId);
+  const settings = await getOrCreateTelegramSettings(userId);
+  const auth = ensureAuthorizedSettings(chatId, settings);
   if (!auth.ok) {
     await safeAnswerCallback(bot, query?.id, auth.message || "Not authorized.");
     return;
   }
 
-  const settings = auth.settings;
+  const scopedSettings = auth.settings;
 
   const action = extractAccountAction(data);
   const requiresCooldown =
-    data === "pause_one" || data === "resume_one" || data === "pause_all" || data === "resume_all" || Boolean(action);
-  if (requiresCooldown && !consumeActionCooldown(chatId)) {
+    data === "pause_one" ||
+    data === "resume_one" ||
+    data === "pause_all" ||
+    data === "resume_all" ||
+    Boolean(action);
+  if (requiresCooldown && !consumeActionCooldown(cooldownByChatId, chatId)) {
     await safeAnswerCallback(bot, query?.id, "Please wait 2 seconds.");
     return;
   }
 
   try {
     if (data === "pause_one") {
-      await showAccountPicker(query, "pause", settings);
+      await showAccountPicker(bot, query, "pause", scopedSettings);
       return;
     }
 
     if (data === "resume_one") {
-      await showAccountPicker(query, "resume", settings);
+      await showAccountPicker(bot, query, "resume", scopedSettings);
       return;
     }
 
     if (data === "pause_all") {
-      const summary = await pauseAllAccounts(settings);
+      const summary = await pauseAllAccounts(scopedSettings);
       await safeAnswerCallback(
         bot,
         query.id,
         `\u2705 Paused ${summary.paused}, already paused ${summary.alreadyPaused}`
       );
-      await upsertPanelMessage(settings);
+      await upsertPanelMessage(bot, scopedSettings);
       return;
     }
 
     if (data === "resume_all") {
-      const summary = await resumeAllAccounts(settings);
+      const summary = await resumeAllAccounts(scopedSettings);
       await safeAnswerCallback(
         bot,
         query.id,
         `\u2705 Resumed ${summary.resumed}, already running ${summary.alreadyRunning}`
       );
-      await upsertPanelMessage(settings);
+      await upsertPanelMessage(bot, scopedSettings);
       return;
     }
 
     if (action) {
-      await handleAccountAction(query, action, settings);
+      await handleAccountAction(bot, query, action, scopedSettings);
       return;
     }
 
@@ -715,99 +726,218 @@ async function handleCallbackQuery(query) {
   } catch (error) {
     console.error("[TELEGRAM-PANEL] Callback action failed:", error?.stack || error?.message || error);
     await safeAnswerCallback(bot, query?.id, "Error: action failed");
-    await upsertPanelMessage(settings).catch(() => null);
+    await upsertPanelMessage(bot, scopedSettings).catch(() => null);
   }
 }
 
-function attachBotHandlers(bot) {
+function attachBotHandlers(bot, userId, cooldownByChatId) {
   bot.onText(/^\/(?:start|panel)(?:@[A-Za-z0-9_]+)?(?:\s+.*)?$/i, (message) => {
-    handlePanelCommand(message).catch((error) => {
+    handlePanelCommand(bot, message, userId).catch((error) => {
       console.error("[TELEGRAM-PANEL] Panel command failed:", error?.stack || error?.message || error);
     });
   });
 
   bot.on("callback_query", (query) => {
-    handleCallbackQuery(query).catch((error) => {
+    handleCallbackQuery(bot, query, userId, cooldownByChatId).catch((error) => {
       console.error("[TELEGRAM-PANEL] callback_query handler failed:", error?.stack || error?.message || error);
     });
   });
 
   bot.on("polling_error", (error) => {
-    console.error("[TELEGRAM-PANEL] Polling error:", getErrorMessage(error));
+    console.error(`[TELEGRAM-PANEL] Polling error user=${userId}:`, getErrorMessage(error));
   });
 }
 
-async function stopCurrentBot() {
-  if (!runtime.bot) {
-    return;
-  }
+async function stopRuntimeForUser(userIdInput) {
+  const userId = normalizeString(userIdInput);
+  if (!userId) return;
+
+  const entry = runtime.botsByUserId.get(userId);
+  if (!entry) return;
 
   try {
-    await runtime.bot.stopPolling({ cancel: true });
+    await entry.bot.stopPolling({ cancel: true });
   } catch (error) {
     console.error("[TELEGRAM-PANEL] Failed to stop polling:", getErrorMessage(error));
   }
 
-  runtime.bot = null;
-  runtime.token = "";
-  runtime.chatId = "";
+  runtime.botsByUserId.delete(userId);
 }
 
-async function reloadTelegramBotFromSettings() {
-  const settings = await getOrCreateTelegramSettings();
+async function stopAllRuntimes() {
+  const userIds = Array.from(runtime.botsByUserId.keys());
+  for (const userId of userIds) {
+    await stopRuntimeForUser(userId);
+  }
+}
+
+function hasDuplicateTokenInActiveRuntimes(userId, token) {
+  for (const [otherUserId, entry] of runtime.botsByUserId.entries()) {
+    if (otherUserId !== userId && normalizeString(entry?.token) === token) {
+      return otherUserId;
+    }
+  }
+  return "";
+}
+
+async function ensureRuntimeForSettings(settings, tokenOwners) {
+  const userId = getScopedUserId(settings);
+  if (!userId) {
+    return {
+      started: false,
+      reason: "missing_user"
+    };
+  }
+
   const token = normalizeString(settings?.botToken);
   const chatId = normalizeString(settings?.chatId);
 
   if (!isValidTelegramToken(token) || !isValidTelegramChatId(chatId)) {
-    await stopCurrentBot();
+    await stopRuntimeForUser(userId);
     return {
       started: false,
+      reason: "not_configured"
+    };
+  }
+
+  if (tokenOwners) {
+    const owner = tokenOwners.get(token);
+    if (owner && owner !== userId) {
+      await stopRuntimeForUser(userId);
+      console.warn(
+        `[TELEGRAM-PANEL] Duplicate token detected. user=${userId} ignored because token is already used by user=${owner}`
+      );
+      return {
+        started: false,
+        reason: "duplicate_token"
+      };
+    }
+    tokenOwners.set(token, userId);
+  } else {
+    const duplicateOwner = hasDuplicateTokenInActiveRuntimes(userId, token);
+    if (duplicateOwner) {
+      await stopRuntimeForUser(userId);
+      console.warn(
+        `[TELEGRAM-PANEL] Duplicate token detected. user=${userId} ignored because token is already used by user=${duplicateOwner}`
+      );
+      return {
+        started: false,
+        reason: "duplicate_token"
+      };
+    }
+  }
+
+  const existing = runtime.botsByUserId.get(userId);
+  if (existing && normalizeString(existing.token) === token) {
+    existing.chatId = chatId;
+    return {
+      started: true,
+      reason: "already_running"
+    };
+  }
+
+  await stopRuntimeForUser(userId);
+
+  const bot = new TelegramBot(token, {
+    polling: {
+      autoStart: true,
+      params: {
+        timeout: 30
+      }
+    }
+  });
+
+  const cooldownByChatId = new Map();
+  attachBotHandlers(bot, userId, cooldownByChatId);
+
+  runtime.botsByUserId.set(userId, {
+    bot,
+    token,
+    chatId,
+    cooldownByChatId
+  });
+
+  console.log(`[TELEGRAM-PANEL] Bot started user=${userId} token=${maskTelegramToken(token)}`);
+
+  return {
+    started: true,
+    reason: "configured"
+  };
+}
+
+async function reloadTelegramBotFromSettings(userIdInput = "") {
+  const targetUserId = normalizeString(userIdInput);
+
+  if (targetUserId) {
+    const settings = await TelegramSettings.findOne({ userId: targetUserId }).lean();
+    if (!settings) {
+      await stopRuntimeForUser(targetUserId);
+      return {
+        started: runtime.botsByUserId.size > 0,
+        reason: "not_configured",
+        activeBots: runtime.botsByUserId.size
+      };
+    }
+
+    const result = await ensureRuntimeForSettings(settings, null);
+    return {
+      started: runtime.botsByUserId.size > 0,
+      reason: result.reason,
+      activeBots: runtime.botsByUserId.size
+    };
+  }
+
+  const settingsList = await listConfiguredTelegramSettings();
+  const tokenOwners = new Map();
+  const desiredUserIds = new Set();
+
+  for (const settings of settingsList) {
+    const userId = getScopedUserId(settings);
+    if (!userId) {
+      continue;
+    }
+
+    desiredUserIds.add(userId);
+    await ensureRuntimeForSettings(settings, tokenOwners);
+  }
+
+  for (const userId of Array.from(runtime.botsByUserId.keys())) {
+    if (!desiredUserIds.has(userId)) {
+      await stopRuntimeForUser(userId);
+    }
+  }
+
+  const activeBots = runtime.botsByUserId.size;
+  return {
+    started: activeBots > 0,
+    reason: activeBots > 0 ? "configured" : "not_configured",
+    activeBots
+  };
+}
+
+async function refreshTelegramPanel(userIdInput) {
+  const userId = normalizeString(userIdInput);
+  if (!userId) {
+    return {
+      ok: false,
+      reason: "missing_user",
+      settings: null
+    };
+  }
+
+  const settings = await getOrCreateTelegramSettings(userId);
+  await reloadTelegramBotFromSettings(userId);
+
+  const entry = runtime.botsByUserId.get(userId);
+  if (!entry) {
+    return {
+      ok: false,
       reason: "not_configured",
       settings: buildSettingsPublicPayload(settings)
     };
   }
 
-  if (!runtime.bot || runtime.token !== token) {
-    await stopCurrentBot();
-
-    const bot = new TelegramBot(token, {
-      polling: {
-        autoStart: true,
-        params: {
-          timeout: 30
-        }
-      }
-    });
-
-    attachBotHandlers(bot);
-    runtime.bot = bot;
-    runtime.token = token;
-
-    console.log(`[TELEGRAM-PANEL] Bot started for token ${maskTelegramToken(token)}`);
-  }
-
-  runtime.chatId = chatId;
-
-  return {
-    started: true,
-    reason: "configured",
-    settings: buildSettingsPublicPayload(settings)
-  };
-}
-
-async function refreshTelegramPanel() {
-  const settings = await getOrCreateTelegramSettings();
-
-  const reloadResult = await reloadTelegramBotFromSettings();
-  if (!reloadResult.started) {
-    return {
-      ok: false,
-      reason: reloadResult.reason,
-      settings: reloadResult.settings
-    };
-  }
-
-  const result = await upsertPanelMessage(settings);
+  const result = await upsertPanelMessage(entry.bot, settings);
   return {
     ok: Boolean(result?.ok),
     messageId: result?.messageId || null,
@@ -842,7 +972,7 @@ async function startTelegramControlBot() {
         runtime.refreshTimer = null;
       }
 
-      await stopCurrentBot();
+      await stopAllRuntimes();
     }
   };
 }
@@ -854,4 +984,3 @@ module.exports = {
   getOrCreateTelegramSettings,
   buildSettingsPublicPayload
 };
-
