@@ -22,6 +22,16 @@ const appSettingsSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: ""
+    },
+    telegramAdminUsernames: {
+      type: String,
+      trim: true,
+      default: ""
+    },
+    telegramAdminIds: {
+      type: String,
+      trim: true,
+      default: ""
     }
   },
   {
@@ -32,3 +42,4 @@ const appSettingsSchema = new mongoose.Schema(
 appSettingsSchema.index({ userId: 1 }, { unique: true });
 
 module.exports = mongoose.model("AppSettings", appSettingsSchema);
+
