@@ -143,6 +143,28 @@ async function getOrCreateTelegramSettings(userIdInput) {
   return runUpsert();
 }
 
+async function patchTelegramSettingsByUserId(userIdInput, patch = {}) {
+  const userId = normalizeString(userIdInput);
+  if (!userId) return null;
+
+  const safePatch = patch && typeof patch === "object" ? patch : {};
+
+  return TelegramSettings.findOneAndUpdate(
+    { userId },
+    {
+      $set: {
+        userId,
+        ...safePatch
+      }
+    },
+    {
+      upsert: true,
+      new: true,
+      setDefaultsOnInsert: true
+    }
+  );
+}
+
 async function listConfiguredTelegramSettings() {
   return TelegramSettings.find({
     userId: { $exists: true, $ne: null }
@@ -365,12 +387,13 @@ async function upsertPanelMessage(bot, settings, options = {}) {
     reply_markup: replyMarkup
   });
 
-  settings.panelMessageId = Number(sent?.message_id || 0) || null;
-  await settings.save();
+  const panelMessageId = Number(sent?.message_id || 0) || null;
+  settings.panelMessageId = panelMessageId;
+  await patchTelegramSettingsByUserId(getScopedUserId(settings), { panelMessageId }).catch(() => null);
 
   return {
     ok: true,
-    messageId: settings.panelMessageId
+    messageId: panelMessageId
   };
 }
 
@@ -625,7 +648,7 @@ async function showAccountPicker(bot, query, mode, settings) {
 
   if (!settings.panelMessageId || Number(settings.panelMessageId) !== messageId) {
     settings.panelMessageId = messageId;
-    await settings.save().catch(() => null);
+    await patchTelegramSettingsByUserId(getScopedUserId(settings), { panelMessageId: messageId }).catch(() => null);
   }
 }
 

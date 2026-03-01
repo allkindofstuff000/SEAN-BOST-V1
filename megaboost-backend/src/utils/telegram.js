@@ -6,6 +6,8 @@ const TELEGRAM_TOKEN_REGEX = /^\d{6,}:[A-Za-z0-9_-]{20,}$/;
 const TELEGRAM_CHAT_ID_REGEX = /^-?\d+$/;
 const DEFAULT_THROTTLE_MS = 2000;
 const TELEGRAM_REQUEST_TIMEOUT_MS = 8000;
+const TELEGRAM_RETRY_MAX_ATTEMPTS = 2;
+const TELEGRAM_RETRY_DEFAULT_AFTER_MS = 1500;
 const lastSentByThrottleKey = new Map();
 let legacyAppSettingsIndexChecked = false;
 
@@ -52,20 +54,20 @@ async function getOrCreateAppSettings(userIdInput) {
 
   const runUpsert = () =>
     AppSettings.findOneAndUpdate(
-    { userId },
-    {
-      $setOnInsert: {
-        userId,
-        telegramEnabled: false,
-        telegramBotToken: "",
-        telegramChatId: ""
+      { userId },
+      {
+        $setOnInsert: {
+          userId,
+          telegramEnabled: false,
+          telegramBotToken: "",
+          telegramChatId: ""
+        }
+      },
+      {
+        upsert: true,
+        new: true
       }
-    },
-    {
-      upsert: true,
-      new: true
-    }
-  );
+    );
 
   try {
     return await runUpsert();
@@ -99,21 +101,18 @@ async function postJson(url, payload) {
 
   if (typeof fetch === "function") {
     const controller = new AbortController();
-    const timeout = setTimeout(
-      () => controller.abort(),
-      TELEGRAM_REQUEST_TIMEOUT_MS
-    );
-
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body,
-      signal: controller.signal
-    });
+    const timeout = setTimeout(() => controller.abort(), TELEGRAM_REQUEST_TIMEOUT_MS);
 
     try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body,
+        signal: controller.signal
+      });
+
       const raw = await response.text();
       let parsed = null;
       try {
@@ -187,6 +186,52 @@ function isRateLimited(throttleKey, throttleMs) {
   return false;
 }
 
+function sleep(ms) {
+  const timeoutMs = Math.max(0, Number(ms) || 0);
+  if (timeoutMs <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => setTimeout(resolve, timeoutMs));
+}
+
+function getTelegramRetryAfterMs(response) {
+  const retryAfterSec = Number(response?.data?.parameters?.retry_after);
+  if (Number.isFinite(retryAfterSec) && retryAfterSec > 0) {
+    return Math.floor(retryAfterSec * 1000);
+  }
+  return TELEGRAM_RETRY_DEFAULT_AFTER_MS;
+}
+
+function shouldRetryTelegramSend(response) {
+  const status = Number(response?.status || 0);
+  return status === 429 || (status >= 500 && status <= 599);
+}
+
+async function postTelegramMessageWithRetry(endpoint, payload) {
+  let response = null;
+
+  for (let attempt = 1; attempt <= TELEGRAM_RETRY_MAX_ATTEMPTS; attempt += 1) {
+    response = await postJson(endpoint, payload).catch(() => ({
+      ok: false,
+      status: 0,
+      data: null
+    }));
+    const apiOk = Boolean(response?.data?.ok);
+
+    if (response.ok && apiOk) {
+      return response;
+    }
+
+    if (attempt >= TELEGRAM_RETRY_MAX_ATTEMPTS || !shouldRetryTelegramSend(response)) {
+      return response;
+    }
+
+    await sleep(getTelegramRetryAfterMs(response));
+  }
+
+  return response;
+}
+
 async function sendTelegramMessage(text, options = {}) {
   try {
     const message = normalizeString(text);
@@ -207,8 +252,7 @@ async function sendTelegramMessage(text, options = {}) {
       };
     }
 
-    const settingsDoc =
-      options?.settingsDoc || (await getOrCreateAppSettings(scopedUserId));
+    const settingsDoc = options?.settingsDoc || (await getOrCreateAppSettings(scopedUserId));
     let token = normalizeString(settingsDoc?.telegramBotToken);
     let chatId = normalizeString(settingsDoc?.telegramChatId);
     let enabled = Boolean(settingsDoc?.telegramEnabled);
@@ -260,10 +304,7 @@ async function sendTelegramMessage(text, options = {}) {
     const throttleKey = normalizeString(
       options?.throttleKey || options?.accountId || options?.email || scopedUserId || "global"
     );
-    const throttleMs = Math.max(
-      0,
-      Number(options?.throttleMs || DEFAULT_THROTTLE_MS)
-    );
+    const throttleMs = Math.max(0, Number(options?.throttleMs || DEFAULT_THROTTLE_MS));
 
     if (throttleMs > 0 && !options?.skipThrottle && isRateLimited(throttleKey, throttleMs)) {
       return {
@@ -281,11 +322,25 @@ async function sendTelegramMessage(text, options = {}) {
     };
 
     const endpoint = `https://api.telegram.org/bot${token}/sendMessage`;
-    const response = await postJson(endpoint, payload);
-    const apiOk = Boolean(response?.data?.ok);
+    let response = await postTelegramMessageWithRetry(endpoint, payload);
+    let apiOk = Boolean(response?.data?.ok);
 
-    if (!response.ok || !apiOk) {
-      console.warn("[TELEGRAM] Telegram send failed");
+    const apiDescription = normalizeString(response?.data?.description).toLowerCase();
+    const hasParseModeError = Number(response?.status) === 400 && apiDescription.includes("parse entities");
+    if (!apiOk && hasParseModeError) {
+      const plainPayload = {
+        ...payload
+      };
+      delete plainPayload.parse_mode;
+      response = await postTelegramMessageWithRetry(endpoint, plainPayload);
+      apiOk = Boolean(response?.data?.ok);
+    }
+
+    if (!response?.ok || !apiOk) {
+      const description = normalizeString(response?.data?.description) || "n/a";
+      console.warn(
+        `[TELEGRAM] Telegram send failed status=${Number(response?.status || 0)} description=${description}`
+      );
       return {
         ok: false,
         skipped: false,
@@ -298,8 +353,9 @@ async function sendTelegramMessage(text, options = {}) {
       ok: true,
       skipped: false
     };
-  } catch {
-    console.warn("[TELEGRAM] Telegram send failed");
+  } catch (error) {
+    const messageText = normalizeString(error?.message) || "unknown_error";
+    console.warn(`[TELEGRAM] Telegram send failed error=${messageText}`);
     return {
       ok: false,
       skipped: false,
@@ -327,9 +383,9 @@ function shouldSendLogToTelegram(log) {
 function formatTelegramLogMessage(log) {
   const level = normalizeString(log?.level).toLowerCase();
   const emojiByLevel = {
-    success: "âœ…",
-    warning: "âš ï¸",
-    error: "âŒ"
+    success: "\u2705",
+    warning: "\u26A0\uFE0F",
+    error: "\u274C"
   };
   const message = normalizeString(log?.message);
 
@@ -338,8 +394,28 @@ function formatTelegramLogMessage(log) {
     return message;
   }
 
-  const prefix = emojiByLevel[level] || "â„¹ï¸";
+  const prefix = emojiByLevel[level] || "\u2139\uFE0F";
   return `${prefix} ${message}`;
+}
+
+function detectLogNotificationType(log) {
+  const level = normalizeString(log?.level).toLowerCase();
+  const message = normalizeString(log?.message).toLowerCase();
+
+  if (message.includes("bump successful")) return "bump_success";
+  if (message.includes("cooldown detected")) return "cooldown";
+  if (message.includes("login success")) return "login_success";
+  if (message.includes("login failed")) return "login_failed";
+  if (level) return level;
+  return "log";
+}
+
+function buildLogThrottleKey(log) {
+  const accountId = normalizeString(log?.accountId);
+  const email = normalizeString(log?.email).toLowerCase();
+  const userId = normalizeString(log?.userId);
+  const base = accountId || email || userId || "global";
+  return `${base}:${detectLogNotificationType(log)}`;
 }
 
 async function sendTelegramFromLog(log) {
@@ -351,12 +427,12 @@ async function sendTelegramFromLog(log) {
     };
   }
 
-  const accountId = normalizeString(log?.accountId);
-  const email = normalizeString(log?.email);
-  const throttleKey = accountId || email || "global";
+  const message = normalizeString(log?.message).toLowerCase();
+  const isBumpSuccess = message.includes("bump successful");
 
   return sendTelegramMessage(formatTelegramLogMessage(log), {
-    throttleKey,
+    throttleKey: buildLogThrottleKey(log),
+    throttleMs: isBumpSuccess ? 500 : DEFAULT_THROTTLE_MS,
     userId: normalizeString(log?.userId)
   });
 }
@@ -372,4 +448,3 @@ module.exports = {
   sendTelegramMessage,
   sendTelegramFromLog
 };
-

@@ -1,5 +1,6 @@
 const express = require("express");
 const { isValidTelegramChatId, isValidTelegramToken } = require("../utils/telegram");
+const { TelegramSettings } = require("../model/TelegramSettings");
 const {
   getOrCreateTelegramSettings,
   buildSettingsPublicPayload
@@ -13,6 +14,29 @@ function hasOwn(payload, key) {
 
 function getRequestUserId(req) {
   return String(req.user?._id || "").trim();
+}
+
+async function patchTelegramSettingsByUserId(userIdInput, patch = {}) {
+  const userId = String(userIdInput || "").trim();
+  if (!userId) {
+    throw new Error("Authentication required");
+  }
+
+  const safePatch = patch && typeof patch === "object" ? patch : {};
+  return TelegramSettings.findOneAndUpdate(
+    { userId },
+    {
+      $set: {
+        userId,
+        ...safePatch
+      }
+    },
+    {
+      upsert: true,
+      new: true,
+      setDefaultsOnInsert: true
+    }
+  );
 }
 
 router.get("/telegram", async (req, res) => {
@@ -64,19 +88,19 @@ async function saveTelegramSettings(req, res) {
     }
 
     const previousChatId = String(settings.chatId || "").trim();
+    const nextPanelMessageId =
+      !nextToken || !nextChatId || previousChatId !== nextChatId
+        ? null
+        : Number(settings.panelMessageId || 0) || null;
 
-    settings.botToken = nextToken;
-    settings.chatId = nextChatId;
-    settings.userId = userId;
-
-    if (!nextToken || !nextChatId || previousChatId !== nextChatId) {
-      settings.panelMessageId = null;
-    }
-
-    await settings.save();
+    const updated = await patchTelegramSettingsByUserId(userId, {
+      botToken: nextToken,
+      chatId: nextChatId,
+      panelMessageId: nextPanelMessageId
+    });
 
     // Dedicated PM2 telegram process reloads settings on interval.
-    return res.status(200).json(buildSettingsPublicPayload(settings));
+    return res.status(200).json(buildSettingsPublicPayload(updated || settings));
   } catch (error) {
     return res.status(500).json({
       message: error?.message || "Failed to save Telegram settings"

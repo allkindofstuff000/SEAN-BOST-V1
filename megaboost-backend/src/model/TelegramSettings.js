@@ -1,10 +1,12 @@
 const mongoose = require("mongoose");
 
-// Legacy singleton id kept for compatibility/migration checks.
-const TELEGRAM_SETTINGS_ID = "singleton";
-
 const telegramSettingsSchema = new mongoose.Schema(
   {
+    // Compatibility: allow legacy string ids like "singleton" while defaulting new docs to ObjectId.
+    _id: {
+      type: mongoose.Schema.Types.Mixed,
+      default: () => new mongoose.Types.ObjectId()
+    },
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -38,6 +40,5 @@ const telegramSettingsSchema = new mongoose.Schema(
 telegramSettingsSchema.index({ userId: 1 }, { unique: true });
 
 module.exports = {
-  TelegramSettings: mongoose.model("TelegramSettings", telegramSettingsSchema),
-  TELEGRAM_SETTINGS_ID
+  TelegramSettings: mongoose.model("TelegramSettings", telegramSettingsSchema)
 };
