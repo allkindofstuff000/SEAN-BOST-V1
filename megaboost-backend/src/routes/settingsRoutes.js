@@ -2,9 +2,7 @@ const express = require("express");
 const { isValidTelegramChatId, isValidTelegramToken } = require("../utils/telegram");
 const {
   getOrCreateTelegramSettings,
-  buildSettingsPublicPayload,
-  reloadTelegramBotFromSettings,
-  refreshTelegramPanel
+  buildSettingsPublicPayload
 } = require("../integrations/telegram/telegramBot");
 
 const router = express.Router();
@@ -57,8 +55,8 @@ async function saveTelegramSettings(req, res) {
     }
 
     await settings.save();
-    await reloadTelegramBotFromSettings();
 
+    // Dedicated PM2 telegram process reloads settings on interval.
     return res.status(200).json(buildSettingsPublicPayload(settings));
   } catch (error) {
     return res.status(500).json({
@@ -70,56 +68,35 @@ async function saveTelegramSettings(req, res) {
 router.post("/telegram", saveTelegramSettings);
 router.put("/telegram", saveTelegramSettings);
 
-router.post("/telegram/panel", async (_req, res) => {
+async function handlePanelRefreshLike(_req, res) {
   try {
-    const result = await refreshTelegramPanel();
+    const settings = await getOrCreateTelegramSettings();
+    const payload = buildSettingsPublicPayload(settings);
 
-    if (!result?.ok) {
+    if (!payload.enabled) {
       return res.status(400).json({
         ok: false,
         message: "Telegram bot is not configured",
-        ...result
+        settings: payload
       });
     }
 
     return res.status(200).json({
       ok: true,
-      messageId: result.messageId || null,
-      settings: result.settings || null
+      message: "Settings verified. Use /panel in your configured Telegram group to refresh the panel.",
+      settings: payload
     });
   } catch (error) {
     return res.status(500).json({
       ok: false,
-      message: error?.message || "Failed to refresh Telegram panel"
+      message: error?.message || "Failed to verify Telegram settings"
     });
   }
-});
+}
 
-// Backward-compatibility for older dashboard clients using "Send Test".
-router.post("/telegram/test", async (_req, res) => {
-  try {
-    const result = await refreshTelegramPanel();
+router.post("/telegram/panel", handlePanelRefreshLike);
 
-    if (!result?.ok) {
-      return res.status(400).json({
-        ok: false,
-        message: "Telegram bot is not configured",
-        ...result
-      });
-    }
-
-    return res.status(200).json({
-      ok: true,
-      message: "Telegram panel refreshed",
-      messageId: result.messageId || null,
-      settings: result.settings || null
-    });
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      message: error?.message || "Failed to test Telegram settings"
-    });
-  }
-});
+// Backward compatibility for dashboard clients using legacy Send Test endpoint.
+router.post("/telegram/test", handlePanelRefreshLike);
 
 module.exports = router;
