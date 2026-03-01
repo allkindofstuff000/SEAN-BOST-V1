@@ -1,5 +1,6 @@
 const https = require("https");
 const AppSettings = require("../model/AppSettings");
+const { TelegramSettings, TELEGRAM_SETTINGS_ID } = require("../model/TelegramSettings");
 
 const TELEGRAM_TOKEN_REGEX = /^\d{6,}:[A-Za-z0-9_-]{20,}$/;
 const TELEGRAM_CHAT_ID_REGEX = /^-?\d+$/;
@@ -208,9 +209,29 @@ async function sendTelegramMessage(text, options = {}) {
 
     const settingsDoc =
       options?.settingsDoc || (await getOrCreateAppSettings(scopedUserId));
-    const token = normalizeString(settingsDoc?.telegramBotToken);
-    const chatId = normalizeString(settingsDoc?.telegramChatId);
-    const enabled = Boolean(settingsDoc?.telegramEnabled);
+    let token = normalizeString(settingsDoc?.telegramBotToken);
+    let chatId = normalizeString(settingsDoc?.telegramChatId);
+    let enabled = Boolean(settingsDoc?.telegramEnabled);
+
+    // Backward-compatible fallback: use scoped TelegramSettings when AppSettings
+    // no longer stores Telegram credentials for this user.
+    if (scopedUserId && (!token || !chatId || !enabled)) {
+      const telegramSettings = await TelegramSettings.findById(TELEGRAM_SETTINGS_ID)
+        .select("botToken chatId userId")
+        .lean()
+        .catch(() => null);
+
+      const ownerUserId = normalizeString(telegramSettings?.userId);
+      if (ownerUserId && ownerUserId === scopedUserId) {
+        const fallbackToken = normalizeString(telegramSettings?.botToken);
+        const fallbackChatId = normalizeString(telegramSettings?.chatId);
+        if (fallbackToken && fallbackChatId) {
+          token = fallbackToken;
+          chatId = fallbackChatId;
+          enabled = true;
+        }
+      }
+    }
 
     if (!options?.force && !enabled) {
       return {
@@ -351,3 +372,4 @@ module.exports = {
   sendTelegramMessage,
   sendTelegramFromLog
 };
+
