@@ -337,7 +337,20 @@ async function upsertPanelMessage(bot, settings, options = {}) {
   const stats = await buildPanelStats(settings);
   const text = buildPanelText(stats);
   const replyMarkup = options?.replyMarkup || buildPanelKeyboard();
-  const messageId = Number(settings?.panelMessageId || 0);
+  const forceRepost = Boolean(options?.forceRepost);
+  let messageId = Number(settings?.panelMessageId || 0);
+
+  if (forceRepost && messageId > 0) {
+    await bot.deleteMessage(chatId, messageId).catch((error) => {
+      if (!isMessageNotFound(error)) {
+        console.warn("[TELEGRAM-PANEL] Failed to delete previous panel:", getErrorMessage(error));
+      }
+    });
+
+    messageId = 0;
+    settings.panelMessageId = null;
+    await patchTelegramSettingsByUserId(getScopedUserId(settings), { panelMessageId: null }).catch(() => null);
+  }
 
   if (messageId > 0) {
     try {
@@ -595,7 +608,7 @@ async function handlePanelCommand(bot, message, userId) {
     return;
   }
 
-  await upsertPanelMessage(bot, auth.settings);
+  await upsertPanelMessage(bot, auth.settings, { forceRepost: true });
 }
 
 function extractAccountAction(data) {
