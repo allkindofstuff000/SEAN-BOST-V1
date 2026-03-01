@@ -213,9 +213,9 @@ async function sendTelegramMessage(text, options = {}) {
     let chatId = normalizeString(settingsDoc?.telegramChatId);
     let enabled = Boolean(settingsDoc?.telegramEnabled);
 
-    // Backward-compatible fallback: use scoped TelegramSettings when AppSettings
-    // no longer stores Telegram credentials for this user.
-    if (scopedUserId && (!token || !chatId || !enabled)) {
+    // Prefer scoped TelegramSettings credentials when this user owns Telegram panel config.
+    // This keeps log notifications aligned with the latest dashboard Telegram setup.
+    if (scopedUserId) {
       const telegramSettings = await TelegramSettings.findById(TELEGRAM_SETTINGS_ID)
         .select("botToken chatId userId")
         .lean()
@@ -223,11 +223,11 @@ async function sendTelegramMessage(text, options = {}) {
 
       const ownerUserId = normalizeString(telegramSettings?.userId);
       if (ownerUserId && ownerUserId === scopedUserId) {
-        const fallbackToken = normalizeString(telegramSettings?.botToken);
-        const fallbackChatId = normalizeString(telegramSettings?.chatId);
-        if (fallbackToken && fallbackChatId) {
-          token = fallbackToken;
-          chatId = fallbackChatId;
+        const scopedToken = normalizeString(telegramSettings?.botToken);
+        const scopedChatId = normalizeString(telegramSettings?.chatId);
+        if (scopedToken && scopedChatId) {
+          token = scopedToken;
+          chatId = scopedChatId;
           enabled = true;
         }
       }
