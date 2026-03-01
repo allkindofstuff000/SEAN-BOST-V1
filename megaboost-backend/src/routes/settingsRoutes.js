@@ -32,6 +32,7 @@ async function saveTelegramSettings(req, res) {
 
     const nextToken = hasBotToken ? String(body.botToken || "").trim() : String(settings.botToken || "").trim();
     const nextChatId = hasChatId ? String(body.chatId || "").trim() : String(settings.chatId || "").trim();
+    const nextUserId = String(req.user?._id || "").trim();
 
     if (nextToken && !isValidTelegramToken(nextToken)) {
       return res.status(400).json({
@@ -46,11 +47,21 @@ async function saveTelegramSettings(req, res) {
     }
 
     const previousChatId = String(settings.chatId || "").trim();
+    const previousUserId = String(settings.userId || "").trim();
 
     settings.botToken = nextToken;
     settings.chatId = nextChatId;
 
-    if (!nextToken || !nextChatId || previousChatId !== nextChatId) {
+    if (nextUserId) {
+      settings.userId = nextUserId;
+    }
+
+    if (
+      !nextToken ||
+      !nextChatId ||
+      previousChatId !== nextChatId ||
+      (nextUserId && previousUserId !== nextUserId)
+    ) {
       settings.panelMessageId = null;
     }
 
@@ -77,6 +88,14 @@ async function handlePanelRefreshLike(_req, res) {
       return res.status(400).json({
         ok: false,
         message: "Telegram bot is not configured",
+        settings: payload
+      });
+    }
+
+    if (!payload.userId) {
+      return res.status(400).json({
+        ok: false,
+        message: "Telegram user scope is missing. Save Telegram settings again from your dashboard.",
         settings: payload
       });
     }

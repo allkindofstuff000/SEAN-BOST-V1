@@ -18,6 +18,12 @@ const telegramSettingsSchema = new mongoose.Schema(
       default: "",
       trim: true
     },
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+      index: true
+    },
     panelMessageId: {
       type: Number,
       default: null

@@ -51,6 +51,15 @@ function toLower(value) {
   return normalizeString(value).toLowerCase();
 }
 
+function getScopedUserId(settings) {
+  return normalizeString(settings?.userId);
+}
+
+function buildScopedAccountQuery(settings) {
+  const userId = getScopedUserId(settings);
+  return userId ? { userId } : null;
+}
+
 function getErrorMessage(error) {
   return (
     normalizeString(error?.response?.body?.description) ||
@@ -119,7 +128,8 @@ async function getOrCreateTelegramSettings() {
         _id: TELEGRAM_SETTINGS_ID,
         botToken: "",
         chatId: "",
-        panelMessageId: null
+        panelMessageId: null,
+        userId: null
       }
     },
     {
@@ -139,24 +149,29 @@ function buildSettingsPublicPayload(settings) {
     hasTokenConfigured: Boolean(token),
     tokenMasked: maskTelegramToken(token),
     panelMessageId: Number(settings?.panelMessageId) || null,
-    updatedAt: settings?.updatedAt || null
+    updatedAt: settings?.updatedAt || null,
+    userId: normalizeString(settings?.userId) || null
   };
 }
 
-async function resolvePanelUser(accounts) {
+async function resolvePanelUser(accounts, settings) {
   let userName = DEFAULT_PANEL_USER_NAME;
   let userHandle = DEFAULT_PANEL_USER_HANDLE;
 
-  if (!accounts.length) {
-    return { userName, userHandle };
+  const scopedUserId = getScopedUserId(settings);
+  let user = null;
+
+  if (scopedUserId) {
+    user = await User.findById(scopedUserId).select("username").lean().catch(() => null);
   }
 
-  const firstUserId = normalizeString(accounts[0]?.userId);
-  if (!firstUserId) {
-    return { userName, userHandle };
+  if (!user && accounts.length) {
+    const firstUserId = normalizeString(accounts[0]?.userId);
+    if (firstUserId) {
+      user = await User.findById(firstUserId).select("username").lean().catch(() => null);
+    }
   }
 
-  const user = await User.findById(firstUserId).select("username").lean().catch(() => null);
   const username = normalizeString(user?.username);
   if (!username) {
     return { userName, userHandle };
@@ -182,8 +197,11 @@ function calculateProxyHealth(accounts) {
   return Math.max(0, Math.min(100, Math.round((successful / tested.length) * 100)));
 }
 
-async function buildPanelStats() {
-  const accounts = await Account.find({})
+async function buildPanelStats(settings) {
+  const scopedQuery = buildScopedAccountQuery(settings);
+  const query = scopedQuery || {};
+
+  const accounts = await Account.find(query)
     .select("_id userId status connectionTest")
     .sort({ createdAt: -1, _id: -1 })
     .lean();
@@ -192,7 +210,7 @@ async function buildPanelStats() {
   try {
     const workerStatus =
       typeof workerManager.getWorkerStatus === "function"
-        ? await workerManager.getWorkerStatus()
+        ? await workerManager.getWorkerStatus(scopedQuery || {})
         : null;
     queue = Number(workerStatus?.queued || 0);
     if (!Number.isFinite(queue) || queue < 0) {
@@ -235,7 +253,7 @@ async function buildPanelStats() {
     }
   }
 
-  const panelUser = await resolvePanelUser(accounts);
+  const panelUser = await resolvePanelUser(accounts, settings);
 
   return {
     userName: panelUser.userName,
@@ -282,7 +300,7 @@ async function upsertPanelMessage(settings, options = {}) {
     };
   }
 
-  const stats = await buildPanelStats();
+  const stats = await buildPanelStats(settings);
   const text = buildPanelText(stats);
   const replyMarkup = options?.replyMarkup || buildPanelKeyboard();
   const messageId = Number(settings?.panelMessageId || 0);
@@ -344,8 +362,11 @@ async function upsertPanelMessage(settings, options = {}) {
   };
 }
 
-async function listPickerAccounts() {
-  return Account.find({})
+async function listPickerAccounts(settings) {
+  const scopedQuery = buildScopedAccountQuery(settings);
+  const query = scopedQuery || {};
+
+  return Account.find(query)
     .select("_id email status userId workerState")
     .sort({ createdAt: -1, _id: -1 })
     .limit(MAX_PICKER_ACCOUNTS)
@@ -439,8 +460,11 @@ async function setAccountResumed(account) {
   ).catch(() => null);
 }
 
-async function pauseAllAccounts() {
-  const accounts = await Account.find({})
+async function pauseAllAccounts(settings) {
+  const scopedQuery = buildScopedAccountQuery(settings);
+  const query = scopedQuery || {};
+
+  const accounts = await Account.find(query)
     .select("_id email status userId workerState")
     .lean();
 
@@ -460,8 +484,11 @@ async function pauseAllAccounts() {
   return { paused, alreadyPaused };
 }
 
-async function resumeAllAccounts() {
-  const accounts = await Account.find({})
+async function resumeAllAccounts(settings) {
+  const scopedQuery = buildScopedAccountQuery(settings);
+  const query = scopedQuery || {};
+
+  const accounts = await Account.find(query)
     .select("_id email status userId workerState")
     .lean();
 
@@ -504,6 +531,15 @@ async function ensureAuthorizedSettings(chatId) {
       ok: false,
       status: 403,
       message: "Not authorized.",
+      settings
+    };
+  }
+
+  if (!getScopedUserId(settings)) {
+    return {
+      ok: false,
+      status: 400,
+      message: "Telegram user scope is missing. Save Telegram settings again from your dashboard.",
       settings
     };
   }
@@ -558,7 +594,7 @@ async function showAccountPicker(query, mode, settings) {
 
   if (!bot || !chatId || !messageId) return;
 
-  const accounts = await listPickerAccounts();
+  const accounts = await listPickerAccounts(settings);
   if (!accounts.length) {
     await safeAnswerCallback(bot, query.id, "No accounts found.");
     return;
@@ -587,7 +623,13 @@ async function handleAccountAction(query, action, settings) {
   const bot = runtime.bot;
   if (!bot) return;
 
-  const account = await Account.findById(action.accountId)
+  const accountQuery = { _id: action.accountId };
+  const scopedUserId = getScopedUserId(settings);
+  if (scopedUserId) {
+    accountQuery.userId = scopedUserId;
+  }
+
+  const account = await Account.findOne(accountQuery)
     .select("_id email status userId workerState")
     .lean();
 
@@ -643,7 +685,7 @@ async function handleCallbackQuery(query) {
     }
 
     if (data === "pause_all") {
-      const summary = await pauseAllAccounts();
+      const summary = await pauseAllAccounts(settings);
       await safeAnswerCallback(
         bot,
         query.id,
@@ -654,7 +696,7 @@ async function handleCallbackQuery(query) {
     }
 
     if (data === "resume_all") {
-      const summary = await resumeAllAccounts();
+      const summary = await resumeAllAccounts(settings);
       await safeAnswerCallback(
         bot,
         query.id,
