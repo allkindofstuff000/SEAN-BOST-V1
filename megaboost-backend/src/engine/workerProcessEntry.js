@@ -119,6 +119,39 @@ function createApp() {
     }
   });
 
+  app.get("/internal/worker/debug/:accountId", async (req, res) => {
+    try {
+      const accountId = normalizeAccountId(req.params?.accountId);
+      const userId = normalizeUserId(req.query?.userId);
+      if (!accountId) {
+        return res.status(400).json({
+          success: false,
+          message: "accountId is required"
+        });
+      }
+
+      const snapshot = workerManager.getWorkerDebugSnapshot(accountId, {
+        userId
+      });
+      if (!snapshot) {
+        return res.status(404).json({
+          success: false,
+          message: "Worker runtime not found"
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        data: snapshot
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  });
+
   app.post("/internal/worker/request-start", async (req, res) => {
     try {
       const accountId = normalizeAccountId(req.body?.accountId);
@@ -183,6 +216,40 @@ function createApp() {
         data: result || {
           accountId,
           status: "stopped"
+        }
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  });
+
+  app.post("/internal/worker/request-reschedule", async (req, res) => {
+    try {
+      const accountId = normalizeAccountId(req.body?.accountId);
+      const userId = normalizeUserId(req.body?.userId);
+      const options = req.body?.options && typeof req.body.options === "object" ? req.body.options : {};
+
+      if (!accountId) {
+        return res.status(400).json({
+          success: false,
+          message: "accountId is required"
+        });
+      }
+
+      const result = await workerManager.requestReschedule(accountId, {
+        ...options,
+        userId
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: result || {
+          accountId,
+          applied: false,
+          reason: "worker_not_running"
         }
       });
     } catch (error) {

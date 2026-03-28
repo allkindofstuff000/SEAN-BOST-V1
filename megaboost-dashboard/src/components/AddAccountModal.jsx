@@ -1,6 +1,13 @@
 import { useState } from "react";
 import { X } from "lucide-react";
 import { useAccounts } from "../context/AccountsContext";
+import TimePickerField from "./TimePickerField";
+import {
+  buildRuntimeWindowFromClockTimes,
+  DEFAULT_TIMEZONE_LABEL,
+  getRuntimeWindowClockRange
+} from "../utils/timeDisplay";
+import { TIMING_PRESETS_BY_KEY } from "../utils/timingPresets";
 
 const DEFAULT_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36";
@@ -27,7 +34,8 @@ export default function AddAccountModal({ onClose }) {
     userAgent: DEFAULT_UA,
     autoRestartCrashed: true,
     baseInterval: 15,
-    runtimeWindow: "00:00-23:59",
+    runFromTime: "12:00 AM",
+    runToTime: "11:59 PM",
     randomMin: 0,
     randomMax: 5,
     maxDailyRuntime: 24
@@ -40,8 +48,18 @@ export default function AddAccountModal({ onClose }) {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 
-  const applyQuickPreset = (minutes) => {
-    setForm((prev) => ({ ...prev, baseInterval: minutes }));
+  const applyQuickPreset = (presetKey) => {
+    const preset = TIMING_PRESETS_BY_KEY[presetKey];
+    if (!preset) return;
+    const runtimeRange = getRuntimeWindowClockRange(preset.runtimeWindow);
+    setForm((prev) => ({
+      ...prev,
+      baseInterval: preset.baseInterval,
+      randomMin: preset.randomMin,
+      randomMax: preset.randomMax,
+      runFromTime: runtimeRange.start,
+      runToTime: runtimeRange.end
+    }));
   };
 
   const handleSubmit = async (event) => {
@@ -50,6 +68,8 @@ export default function AddAccountModal({ onClose }) {
     setError("");
 
     try {
+      const runtimeWindow = buildRuntimeWindowFromClockTimes(form.runFromTime, form.runToTime);
+      const runtimeRange = getRuntimeWindowClockRange(runtimeWindow);
       const payload = {
         email: form.email,
         password: form.password,
@@ -60,10 +80,18 @@ export default function AddAccountModal({ onClose }) {
         userAgent: form.userAgent,
         autoRestartCrashed: form.autoRestartCrashed,
         baseInterval: Number(form.baseInterval),
-        runtimeWindow: form.runtimeWindow,
+        baseIntervalMinutes: Number(form.baseInterval),
+        runtimeWindow,
+        runtimeStart: runtimeRange.start24h,
+        runtimeEnd: runtimeRange.end24h,
+        runtimeStartTime: form.runFromTime,
+        runtimeEndTime: form.runToTime,
         randomMin: Number(form.randomMin),
+        randomMinMinutes: Number(form.randomMin),
         randomMax: Number(form.randomMax),
-        maxDailyRuntime: Number(form.maxDailyRuntime)
+        randomMaxMinutes: Number(form.randomMax),
+        maxDailyRuntime: Number(form.maxDailyRuntime),
+        maxDailyRuntimeHours: Number(form.maxDailyRuntime)
       };
 
       const result = await addAccount(payload);
@@ -89,6 +117,9 @@ export default function AddAccountModal({ onClose }) {
             <h2 className="text-xl font-semibold">Add New Account</h2>
             <p className="text-sm opacity-70 mt-1">
               Add a new account to your MegaPersonals automation system
+            </p>
+            <p className="text-xs opacity-60 mt-2">
+              Run times use {DEFAULT_TIMEZONE_LABEL}
             </p>
           </div>
 
@@ -228,13 +259,31 @@ export default function AddAccountModal({ onClose }) {
                 <p className="text-xs opacity-70 mt-1">Time between bumps (1-1440 minutes)</p>
               </Field>
 
-              <Field label="Runtime Window" hint="Format: HH:MM-HH:MM">
-                <input
-                  value={form.runtimeWindow}
-                  onChange={(e) => setField("runtimeWindow", e.target.value)}
-                  className="w-full bg-red-950 px-3 py-2 rounded-lg border border-red-800 outline-none focus:border-accent"
-                />
-              </Field>
+              <TimePickerField
+                label="Run Account From"
+                value={form.runFromTime}
+                onChange={(value) => setField("runFromTime", value)}
+                hint="Bangladesh time (UTC+6)"
+                wrapperClassName="flex flex-col"
+                labelClassName="mb-1.5 text-sm text-white/90"
+                helperClassName="mt-1 text-xs text-white/60"
+                selectClassName="w-full bg-red-950 px-3 py-2 rounded-lg border border-red-800 outline-none focus:border-accent"
+                rowClassName="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(96px,0.8fr)] gap-2 items-center max-sm:grid-cols-2"
+                separatorClassName="text-lg opacity-70 text-center max-sm:hidden"
+              />
+
+              <TimePickerField
+                label="Run Account To"
+                value={form.runToTime}
+                onChange={(value) => setField("runToTime", value)}
+                hint="Bangladesh time (UTC+6)"
+                wrapperClassName="flex flex-col"
+                labelClassName="mb-1.5 text-sm text-white/90"
+                helperClassName="mt-1 text-xs text-white/60"
+                selectClassName="w-full bg-red-950 px-3 py-2 rounded-lg border border-red-800 outline-none focus:border-accent"
+                rowClassName="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(96px,0.8fr)] gap-2 items-center max-sm:grid-cols-2"
+                separatorClassName="text-lg opacity-70 text-center max-sm:hidden"
+              />
 
               <Field label="Random Range Min (minutes)">
                 <input
@@ -271,21 +320,19 @@ export default function AddAccountModal({ onClose }) {
             <div className="mt-4">
               <p className="text-sm mb-2 opacity-80">Quick Settings:</p>
               <div className="flex gap-2 flex-wrap">
-                <button type="button" className="bg-gray-700 px-3 py-1 rounded text-xs" onClick={() => applyQuickPreset(45)}>
+                <button type="button" className="bg-gray-700 px-3 py-1 rounded text-xs" onClick={() => applyQuickPreset("conservative")}>
                   Conservative (45min)
                 </button>
-                <button type="button" className="bg-gray-700 px-3 py-1 rounded text-xs" onClick={() => applyQuickPreset(30)}>
+                <button type="button" className="bg-gray-700 px-3 py-1 rounded text-xs" onClick={() => applyQuickPreset("standard")}>
                   Standard (30min)
                 </button>
-                <button type="button" className="bg-gray-700 px-3 py-1 rounded text-xs" onClick={() => applyQuickPreset(15)}>
+                <button type="button" className="bg-gray-700 px-3 py-1 rounded text-xs" onClick={() => applyQuickPreset("aggressive")}>
                   Aggressive (15min)
                 </button>
                 <button
                   type="button"
                   className="bg-gray-700 px-3 py-1 rounded text-xs"
-                  onClick={() =>
-                    setForm((prev) => ({ ...prev, runtimeWindow: "09:00-18:00" }))
-                  }
+                  onClick={() => applyQuickPreset("business_hours")}
                 >
                   Business Hours
                 </button>

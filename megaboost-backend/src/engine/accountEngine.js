@@ -539,6 +539,10 @@ class AccountEngine {
   getWorkerStatus(options = {}) {
     return getWorkerManager().getWorkerStatus(options);
   }
+
+  getWorkerDebugSnapshot(accountId, options = {}) {
+    return getWorkerManager().getWorkerDebugSnapshot(accountId, options);
+  }
 }
 
 const engine = new AccountEngine();

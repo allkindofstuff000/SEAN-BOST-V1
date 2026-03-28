@@ -3,6 +3,13 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { LoaderCircle } from "lucide-react";
 import { useAccounts } from "../context/AccountsContext";
 import { getAccountById, updateAccount } from "../lib/api";
+import TimePickerField from "../components/TimePickerField";
+import {
+  buildRuntimeWindowFromClockTimes,
+  DEFAULT_TIMEZONE_LABEL,
+  getRuntimeWindowClockRange
+} from "../utils/timeDisplay";
+import { TIMING_PRESETS_BY_KEY } from "../utils/timingPresets";
 import "./AddAccount.css";
 
 const DEFAULT_UA =
@@ -17,8 +24,6 @@ const USER_AGENTS = {
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
 };
 
-const WINDOW_REGEX = /^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$/;
-
 function createInitialForm() {
   return {
     email: "",
@@ -30,7 +35,8 @@ function createInitialForm() {
     userAgent: DEFAULT_UA,
     autoRestartCrashed: true,
     baseInterval: "15",
-    runtimeWindow: "00:00-23:59",
+    runFromTime: "12:00 AM",
+    runToTime: "11:59 PM",
     randomMin: "0",
     randomMax: "5",
     maxDailyRuntime: "24"
@@ -39,6 +45,7 @@ function createInitialForm() {
 
 function mapAccountToForm(account) {
   if (!account) return createInitialForm();
+  const runtimeRange = getRuntimeWindowClockRange(account.runtimeWindow || "00:00-23:59");
 
   return {
     email: account.email || "",
@@ -50,7 +57,8 @@ function mapAccountToForm(account) {
     userAgent: account.userAgent || DEFAULT_UA,
     autoRestartCrashed: account.autoRestartCrashed !== false,
     baseInterval: account.baseInterval != null ? String(account.baseInterval) : "15",
-    runtimeWindow: account.runtimeWindow || "00:00-23:59",
+    runFromTime: runtimeRange.start,
+    runToTime: runtimeRange.end,
     randomMin: account.randomMin != null ? String(account.randomMin) : "0",
     randomMax: account.randomMax != null ? String(account.randomMax) : "5",
     maxDailyRuntime: account.maxDailyRuntime != null ? String(account.maxDailyRuntime) : "24"
@@ -123,15 +131,27 @@ export default function EditAccount() {
   };
 
   const applyQuickSetting = (type) => {
-    const settings = {
-      conservative: { baseInterval: "45", runtimeWindow: "00:00-23:59" },
-      standard: { baseInterval: "30", runtimeWindow: "00:00-23:59" },
-      aggressive: { baseInterval: "15", runtimeWindow: "00:00-23:59" },
-      business: { baseInterval: "30", runtimeWindow: "09:00-17:00" }
-    };
+    const presetKey = type === "business" ? "business_hours" : type;
+    const preset = TIMING_PRESETS_BY_KEY[presetKey];
+    if (!preset) return;
+    const runtimeRange = getRuntimeWindowClockRange(preset.runtimeWindow);
 
-    setForm((prev) => ({ ...prev, ...settings[type] }));
-    setErrors((prev) => ({ ...prev, baseInterval: "", runtimeWindow: "" }));
+    setForm((prev) => ({
+      ...prev,
+      baseInterval: String(preset.baseInterval),
+      randomMin: String(preset.randomMin),
+      randomMax: String(preset.randomMax),
+      runFromTime: runtimeRange.start,
+      runToTime: runtimeRange.end
+    }));
+    setErrors((prev) => ({
+      ...prev,
+      baseInterval: "",
+      runFromTime: "",
+      runToTime: "",
+      randomMin: "",
+      randomMax: ""
+    }));
   };
 
   const validate = () => {
@@ -149,8 +169,20 @@ export default function EditAccount() {
       nextErrors.baseInterval = "Base Interval must be between 1 and 1440";
     }
 
-    if (!WINDOW_REGEX.test(form.runtimeWindow)) {
-      nextErrors.runtimeWindow = "Runtime Window must match HH:MM-HH:MM";
+    if (!form.runFromTime.trim()) {
+      nextErrors.runFromTime = "Run Account From is required";
+    }
+
+    if (!form.runToTime.trim()) {
+      nextErrors.runToTime = "Run Account To is required";
+    }
+
+    if (
+      !nextErrors.runFromTime &&
+      !nextErrors.runToTime &&
+      !buildRuntimeWindowFromClockTimes(form.runFromTime, form.runToTime)
+    ) {
+      nextErrors.runToTime = "Run account time range is invalid";
     }
 
     if (form.randomMin === "" || Number.isNaN(Number(form.randomMin))) {
@@ -183,6 +215,8 @@ export default function EditAccount() {
     setSubmitting(true);
 
     try {
+      const runtimeWindow = buildRuntimeWindowFromClockTimes(form.runFromTime, form.runToTime);
+      const runtimeRange = getRuntimeWindowClockRange(runtimeWindow);
       await updateAccount(id, {
         email: form.email.trim(),
         password: form.password,
@@ -193,10 +227,18 @@ export default function EditAccount() {
         userAgent: form.userAgent.trim(),
         autoRestartCrashed: form.autoRestartCrashed,
         baseInterval: Number(form.baseInterval),
-        runtimeWindow: form.runtimeWindow,
+        baseIntervalMinutes: Number(form.baseInterval),
+        runtimeWindow,
+        runtimeStart: runtimeRange.start24h,
+        runtimeEnd: runtimeRange.end24h,
+        runtimeStartTime: form.runFromTime.trim(),
+        runtimeEndTime: form.runToTime.trim(),
         randomMin: Number(form.randomMin),
+        randomMinMinutes: Number(form.randomMin),
         randomMax: Number(form.randomMax),
-        maxDailyRuntime: Number(form.maxDailyRuntime)
+        randomMaxMinutes: Number(form.randomMax),
+        maxDailyRuntime: Number(form.maxDailyRuntime),
+        maxDailyRuntimeHours: Number(form.maxDailyRuntime)
       });
 
       setSuccessMessage("Account updated successfully.");
@@ -222,6 +264,7 @@ export default function EditAccount() {
 
       <h1 className="add-account-title">Edit Account</h1>
       <p className="add-account-subtitle">Update your account configuration</p>
+      <p className="hint">Run times are interpreted in {DEFAULT_TIMEZONE_LABEL}.</p>
       {loadingAccount && <p className="hint">Loading account configuration...</p>}
 
       <form className="add-account-form" onSubmit={handleSubmit}>
@@ -325,16 +368,28 @@ export default function EditAccount() {
               />
             </Field>
 
-            <Field label="Runtime Window" error={errors.runtimeWindow} hint="Format: HH:MM-HH:MM">
-              <input
-                value={form.runtimeWindow}
-                onChange={(e) => setField("runtimeWindow", e.target.value)}
-              />
-            </Field>
+            <TimePickerField
+              label="Run Account From"
+              value={form.runFromTime}
+              onChange={(value) => setField("runFromTime", value)}
+              hint="Bangladesh time (UTC+6)"
+              error={errors.runFromTime}
+              wrapperClassName="field-block"
+            />
+
+            <TimePickerField
+              label="Run Account To"
+              value={form.runToTime}
+              onChange={(value) => setField("runToTime", value)}
+              hint="Bangladesh time (UTC+6)"
+              error={errors.runToTime}
+              wrapperClassName="field-block"
+            />
 
             <Field label="Random Range Min (minutes)" error={errors.randomMin}>
               <input
                 type="number"
+                step="0.5"
                 value={form.randomMin}
                 onChange={(e) => setField("randomMin", e.target.value)}
               />
@@ -343,6 +398,7 @@ export default function EditAccount() {
             <Field label="Random Range Max (minutes)" error={errors.randomMax}>
               <input
                 type="number"
+                step="0.5"
                 value={form.randomMax}
                 onChange={(e) => setField("randomMax", e.target.value)}
               />

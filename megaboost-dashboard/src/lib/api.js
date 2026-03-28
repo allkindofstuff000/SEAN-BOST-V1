@@ -324,6 +324,16 @@ export async function getTelegramSettings(options = {}) {
   return res.data;
 }
 
+export async function getAppSettings(options = {}) {
+  const res = await api.get("/api/settings/app", options);
+  return res.data;
+}
+
+export async function updateAppSettings(payload, options = {}) {
+  const res = await api.put("/api/settings/app", payload, options);
+  return res.data;
+}
+
 export async function updateTelegramSettings(payload, options = {}) {
   const res = await api.put("/api/settings/telegram", payload, options);
   return res.data;

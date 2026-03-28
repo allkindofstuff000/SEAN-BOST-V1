@@ -1,6 +1,7 @@
 const https = require("https");
-const AppSettings = require("../model/AppSettings");
 const { TelegramSettings } = require("../model/TelegramSettings");
+const TelegramGroupBinding = require("../model/TelegramGroupBinding");
+const { getOrCreateAppSettings } = require("./appSettings");
 
 const TELEGRAM_TOKEN_REGEX = /^\d{6,}:[A-Za-z0-9_-]{20,}$/;
 const TELEGRAM_CHAT_ID_REGEX = /^-?\d+$/;
@@ -9,7 +10,6 @@ const TELEGRAM_REQUEST_TIMEOUT_MS = 8000;
 const TELEGRAM_RETRY_MAX_ATTEMPTS = 2;
 const TELEGRAM_RETRY_DEFAULT_AFTER_MS = 1500;
 const lastSentByThrottleKey = new Map();
-let legacyAppSettingsIndexChecked = false;
 
 function normalizeString(value) {
   return String(value || "").trim();
@@ -44,56 +44,6 @@ function buildTelegramPublicConfig(settings) {
     chatId,
     tokenMasked: maskTelegramToken(token)
   };
-}
-
-async function getOrCreateAppSettings(userIdInput) {
-  const userId = normalizeString(userIdInput);
-  if (!userId) {
-    throw new Error("userId is required to load app settings");
-  }
-
-  const runUpsert = () =>
-    AppSettings.findOneAndUpdate(
-      { userId },
-      {
-        $setOnInsert: {
-          userId,
-          telegramEnabled: false,
-          telegramBotToken: "",
-          telegramChatId: ""
-        }
-      },
-      {
-        upsert: true,
-        new: true
-      }
-    );
-
-  try {
-    return await runUpsert();
-  } catch (error) {
-    const duplicateKeyError = Number(error?.code) === 11000;
-    const message = String(error?.message || "");
-    const legacyKeyIndexConflict =
-      duplicateKeyError && (message.includes(" key_1 ") || message.includes(" index: key_1 "));
-
-    if (!legacyKeyIndexConflict) {
-      throw error;
-    }
-
-    if (!legacyAppSettingsIndexChecked) {
-      legacyAppSettingsIndexChecked = true;
-      const indexes = await AppSettings.collection.indexes().catch(() => []);
-      for (const index of indexes) {
-        if (index?.name === "_id_") continue;
-        if (index?.key && Object.prototype.hasOwnProperty.call(index.key, "key")) {
-          await AppSettings.collection.dropIndex(index.name).catch(() => null);
-        }
-      }
-    }
-
-    return runUpsert();
-  }
 }
 
 async function postJson(url, payload) {
@@ -254,7 +204,7 @@ async function sendTelegramMessage(text, options = {}) {
 
     const settingsDoc = options?.settingsDoc || (await getOrCreateAppSettings(scopedUserId));
     let token = normalizeString(settingsDoc?.telegramBotToken);
-    let chatId = normalizeString(settingsDoc?.telegramChatId);
+    let chatId = normalizeString(options?.chatIdOverride || settingsDoc?.telegramChatId);
     let enabled = Boolean(settingsDoc?.telegramEnabled);
 
     // Prefer scoped TelegramSettings credentials when this user owns Telegram panel config.
@@ -268,7 +218,7 @@ async function sendTelegramMessage(text, options = {}) {
       const ownerUserId = normalizeString(telegramSettings?.userId);
       if (ownerUserId && ownerUserId === scopedUserId) {
         const scopedToken = normalizeString(telegramSettings?.botToken);
-        const scopedChatId = normalizeString(telegramSettings?.chatId);
+        const scopedChatId = normalizeString(options?.chatIdOverride || telegramSettings?.chatId);
         if (scopedToken && scopedChatId) {
           token = scopedToken;
           chatId = scopedChatId;
@@ -364,6 +314,238 @@ async function sendTelegramMessage(text, options = {}) {
   }
 }
 
+async function listBoundChatIdsForAccount(options = {}) {
+  const userId = normalizeString(options?.userId);
+  const accountId = normalizeString(options?.accountId);
+  if (!userId || !accountId) {
+    return [];
+  }
+
+  const bindings = await TelegramGroupBinding.find({
+    userId,
+    accountId
+  })
+    .select("chatId")
+    .lean()
+    .catch(() => []);
+
+  return bindings
+    .map((binding) => normalizeString(binding?.chatId))
+    .filter(Boolean);
+}
+
+async function sendTelegramMessageToBoundGroups(text, options = {}) {
+  const userId = normalizeString(options?.userId);
+  const accountId = normalizeString(options?.accountId);
+  if (!userId || !accountId) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: "missing_binding_scope",
+      results: []
+    };
+  }
+
+  const settingsDoc = options?.settingsDoc || (await getOrCreateAppSettings(userId));
+  const telegramSettings = await TelegramSettings.findOne({ userId })
+    .select("botToken chatId userId")
+    .lean()
+    .catch(() => null);
+
+  const primaryChatId = normalizeString(
+    options?.primaryChatId ||
+      telegramSettings?.chatId ||
+      settingsDoc?.telegramChatId
+  );
+  const boundChatIds = await listBoundChatIdsForAccount({ userId, accountId });
+  const targetChatIds = Array.from(new Set(boundChatIds)).filter((chatId) => chatId && chatId !== primaryChatId);
+
+  if (!targetChatIds.length) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: "no_bound_groups",
+      results: []
+    };
+  }
+
+  const results = [];
+  for (const chatId of targetChatIds) {
+    const result = await sendTelegramMessage(text, {
+      ...options,
+      settingsDoc,
+      userId,
+      chatIdOverride: chatId,
+      throttleKey: `${normalizeString(options?.throttleKey || accountId)}:chat:${chatId}`,
+      skipThrottle: Boolean(options?.skipThrottle)
+    });
+    results.push({
+      chatId,
+      ...result
+    });
+  }
+
+  return {
+    ok: results.some((result) => result.ok),
+    skipped: results.every((result) => result.skipped),
+    reason: results.every((result) => result.skipped) ? "all_skipped" : "",
+    results
+  };
+}
+
+function formatEventDuration(waitMs) {
+  const totalSeconds = Math.max(1, Math.ceil(Math.max(0, Number(waitMs || 0)) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  if (minutes > 0 && seconds > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m`;
+  }
+  return `${seconds}s`;
+}
+
+function buildTelegramEventThrottleKey(eventType, context = {}) {
+  const accountId = normalizeString(context?.accountId);
+  const email = normalizeString(context?.email).toLowerCase();
+  const userId = normalizeString(context?.userId);
+  const message = normalizeString(context?.message).toLowerCase();
+  const base = accountId || email || userId || "global";
+  return `${base}:event:${normalizeString(eventType)}:${message}`;
+}
+
+function buildTelegramEventMessage(eventType, context = {}) {
+  const email = normalizeString(context?.email) || "unknown account";
+  const reason = normalizeString(context?.message);
+  const proxy = normalizeString(context?.metadata?.proxy);
+  const nextDelayMs = Number(context?.nextDelayMs || context?.metadata?.nextDelayMs || 0);
+  const lines = [];
+
+  if (eventType === "task_success") {
+    lines.push(`[OK] ${email}`);
+    lines.push("Task completed successfully");
+    if (nextDelayMs > 0) {
+      lines.push(`Next in ${formatEventDuration(nextDelayMs)}`);
+    }
+    if (proxy) {
+      lines.push(`Proxy: ${proxy}`);
+    }
+    return lines.join("\n");
+  }
+
+  if (eventType === "cooldown_detected") {
+    lines.push(`[WARN] ${email}`);
+    lines.push("Cooldown detected");
+    if (nextDelayMs > 0) {
+      lines.push(`Next in ${formatEventDuration(nextDelayMs)}`);
+    }
+    if (proxy) {
+      lines.push(`Proxy: ${proxy}`);
+    }
+    return lines.join("\n");
+  }
+
+  if (eventType === "retry_scheduled") {
+    lines.push(`[WARN] ${email}`);
+    lines.push("Retry scheduled");
+    if (reason) {
+      lines.push(`Reason: ${reason}`);
+    }
+    if (nextDelayMs > 0) {
+      lines.push(`Next retry in ${formatEventDuration(nextDelayMs)}`);
+    }
+    if (proxy) {
+      lines.push(`Proxy: ${proxy}`);
+    }
+    return lines.join("\n");
+  }
+
+  if (eventType === "worker_stalled") {
+    lines.push(`[WARN] ${email}`);
+    lines.push("Worker stalled");
+    if (reason) {
+      lines.push(reason);
+    }
+    lines.push("Attempting recovery...");
+    return lines.join("\n");
+  }
+
+  if (eventType === "worker_recovered") {
+    lines.push(`[OK] ${email}`);
+    lines.push("Worker recovered");
+    lines.push("Cycle resumed successfully");
+    if (nextDelayMs > 0) {
+      lines.push(`Next in ${formatEventDuration(nextDelayMs)}`);
+    }
+    return lines.join("\n");
+  }
+
+  if (eventType === "worker_crashed") {
+    lines.push(`[ERROR] ${email}`);
+    lines.push("Worker crashed");
+    if (reason) {
+      lines.push(`Reason: ${reason}`);
+    }
+    return lines.join("\n");
+  }
+
+  if (eventType === "account_blocked") {
+    lines.push(`[ERROR] ${email}`);
+    lines.push("Account blocked");
+    if (reason) {
+      lines.push(`Reason: ${reason}`);
+    }
+    if (proxy) {
+      lines.push(`Proxy: ${proxy}`);
+    }
+    return lines.join("\n");
+  }
+
+  return "";
+}
+
+async function sendTelegramEvent(eventType, context = {}, options = {}) {
+  const normalizedEventType = normalizeString(eventType);
+  if (!normalizedEventType) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: "missing_event_type"
+    };
+  }
+
+  const message = buildTelegramEventMessage(normalizedEventType, context);
+  if (!message) {
+    return {
+      ok: false,
+      skipped: true,
+      reason: "unsupported_event_type"
+    };
+  }
+
+  const sendOptions = {
+    userId: normalizeString(context?.userId),
+    throttleKey: buildTelegramEventThrottleKey(normalizedEventType, context),
+    throttleMs: Math.max(0, Number(options?.throttleMs || 60 * 1000)),
+    skipThrottle: Boolean(options?.skipThrottle)
+  };
+
+  const primary = await sendTelegramMessage(message, sendOptions);
+  const fanout = await sendTelegramMessageToBoundGroups(message, {
+    ...sendOptions,
+    accountId: normalizeString(context?.accountId)
+  });
+
+  return {
+    ok: Boolean(primary?.ok || fanout?.ok),
+    skipped: Boolean(primary?.skipped && (fanout?.skipped ?? true)),
+    primary,
+    fanout
+  };
+}
+
 function shouldSendLogToTelegram(log) {
   const level = normalizeString(log?.level).toLowerCase();
   if (!["success", "warning", "error"].includes(level)) return false;
@@ -430,11 +612,24 @@ async function sendTelegramFromLog(log) {
   const message = normalizeString(log?.message).toLowerCase();
   const isBumpSuccess = message.includes("bump successful");
 
-  return sendTelegramMessage(formatTelegramLogMessage(log), {
+  const sendOptions = {
     throttleKey: buildLogThrottleKey(log),
     throttleMs: isBumpSuccess ? 500 : DEFAULT_THROTTLE_MS,
     userId: normalizeString(log?.userId)
+  };
+  const messageText = formatTelegramLogMessage(log);
+  const primary = await sendTelegramMessage(messageText, sendOptions);
+  const fanout = await sendTelegramMessageToBoundGroups(messageText, {
+    ...sendOptions,
+    accountId: normalizeString(log?.accountId)
   });
+
+  return {
+    ok: Boolean(primary?.ok || fanout?.ok),
+    skipped: Boolean(primary?.skipped && (fanout?.skipped ?? true)),
+    primary,
+    fanout
+  };
 }
 
 module.exports = {
@@ -446,5 +641,7 @@ module.exports = {
   buildTelegramPublicConfig,
   getOrCreateAppSettings,
   sendTelegramMessage,
-  sendTelegramFromLog
+  sendTelegramMessageToBoundGroups,
+  sendTelegramFromLog,
+  sendTelegramEvent
 };

@@ -8,11 +8,11 @@ function statusToLevel(status) {
     return "error";
   }
 
-  if (["waiting_cooldown", "paused"].includes(value)) {
+  if (["waiting_cooldown", "paused", "retry_scheduled", "stalled"].includes(value)) {
     return "warning";
   }
 
-  if (["active", "running", "bumping", "completed"].includes(value)) {
+  if (["active", "running", "bumping", "completed", "starting"].includes(value)) {
     return "success";
   }
 

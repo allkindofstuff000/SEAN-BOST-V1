@@ -1,6 +1,8 @@
 const express = require("express");
+const AppSettings = require("../model/AppSettings");
 const { isValidTelegramChatId, isValidTelegramToken } = require("../utils/telegram");
 const { TelegramSettings } = require("../model/TelegramSettings");
+const { getOrCreateAppSettings, sanitizeAppTimingPatch, buildAppSettingsPublicPayload } = require("../utils/appSettings");
 const {
   getOrCreateTelegramSettings,
   buildSettingsPublicPayload
@@ -56,6 +58,70 @@ router.get("/telegram", async (req, res) => {
     });
   }
 });
+
+router.get("/app", async (req, res) => {
+  try {
+    const userId = getRequestUserId(req);
+    if (!userId) {
+      return res.status(401).json({
+        message: "Authentication required"
+      });
+    }
+
+    const settings = await getOrCreateAppSettings(userId);
+    return res.status(200).json(buildAppSettingsPublicPayload(settings));
+  } catch (error) {
+    return res.status(500).json({
+      message: error?.message || "Failed to load app settings"
+    });
+  }
+});
+
+async function saveAppSettings(req, res) {
+  try {
+    const userId = getRequestUserId(req);
+    if (!userId) {
+      return res.status(401).json({
+        message: "Authentication required"
+      });
+    }
+
+    const existing = await getOrCreateAppSettings(userId);
+    const patch = sanitizeAppTimingPatch({
+      timezone: hasOwn(req.body, "timezone") ? req.body.timezone : existing.timezone,
+      timezoneLabel: hasOwn(req.body, "timezoneLabel")
+        ? req.body.timezoneLabel
+        : existing.timezoneLabel,
+      uiTimeFormat: hasOwn(req.body, "uiTimeFormat")
+        ? req.body.uiTimeFormat
+        : existing.uiTimeFormat
+    });
+
+    const updated = await AppSettings.findOneAndUpdate(
+      { userId },
+      {
+        $set: {
+          userId,
+          ...patch
+        }
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true
+      }
+    );
+
+    return res.status(200).json(buildAppSettingsPublicPayload(updated || existing));
+  } catch (error) {
+    return res.status(500).json({
+      message: error?.message || "Failed to save app settings"
+    });
+  }
+}
+
+router.post("/app", saveAppSettings);
+router.put("/app", saveAppSettings);
 
 async function saveTelegramSettings(req, res) {
   try {

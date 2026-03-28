@@ -10,52 +10,15 @@ import {
 } from "lucide-react";
 import { useAccounts } from "../context/AccountsContext";
 import { applyBumpPreset, getBumpPresets } from "../lib/api";
+import TimePickerField from "../components/TimePickerField";
 import { isRunningLikeStatus } from "../utils/accountStatus";
-
-const WINDOW_REGEX = /^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$/;
-
-const FALLBACK_PRESETS = [
-  {
-    key: "conservative",
-    name: "Conservative",
-    icon: "🐢",
-    intervalLabel: "45min",
-    baseInterval: 45,
-    randomMin: 5,
-    randomMax: 10,
-    runtimeWindow: "00:00-23:59"
-  },
-  {
-    key: "standard",
-    name: "Standard",
-    icon: "⚖️",
-    intervalLabel: "30min",
-    baseInterval: 30,
-    randomMin: 3,
-    randomMax: 7,
-    runtimeWindow: "00:00-23:59"
-  },
-  {
-    key: "aggressive",
-    name: "Aggressive",
-    icon: "🚀",
-    intervalLabel: "15min",
-    baseInterval: 15,
-    randomMin: 0.5,
-    randomMax: 3,
-    runtimeWindow: "00:00-23:59"
-  },
-  {
-    key: "business_hours",
-    name: "Business Hours",
-    icon: "🕐",
-    intervalLabel: "9AM-5PM",
-    baseInterval: 30,
-    randomMin: 3,
-    randomMax: 7,
-    runtimeWindow: "09:00-17:00"
-  }
-];
+import {
+  buildRuntimeWindowFromClockTimes,
+  DEFAULT_TIMEZONE_LABEL,
+  getRuntimeWindowClockRange,
+  formatRuntimeWindowBDT
+} from "../utils/timeDisplay";
+import { TIMING_PRESETS } from "../utils/timingPresets";
 
 const PRESET_THEME = {
   conservative: {
@@ -78,10 +41,10 @@ const PRESET_THEME = {
 
 function normalizePresetList(serverPresets) {
   if (!Array.isArray(serverPresets) || serverPresets.length === 0) {
-    return FALLBACK_PRESETS;
+    return TIMING_PRESETS;
   }
 
-  const fallbackByKey = new Map(FALLBACK_PRESETS.map((preset) => [preset.key, preset]));
+  const fallbackByKey = new Map(TIMING_PRESETS.map((preset) => [preset.key, preset]));
 
   return serverPresets.map((preset) => {
     const key = String(preset.key || "").trim() || "standard";
@@ -114,14 +77,15 @@ export default function BumpingConfig() {
     baseInterval: "30",
     randomMin: "3",
     randomMax: "7",
-    runtimeWindow: "00:00-23:59",
+    runFromTime: "12:00 AM",
+    runToTime: "11:59 PM",
     maxDailyRuntime: "8"
   });
   const [applyTo, setApplyTo] = useState("all");
   const [saving, setSaving] = useState(false);
   const [selectedPreset, setSelectedPreset] = useState("");
   const [applyingPreset, setApplyingPreset] = useState("");
-  const [presets, setPresets] = useState(FALLBACK_PRESETS);
+  const [presets, setPresets] = useState(TIMING_PRESETS);
 
   const stats = useMemo(() => {
     const bumping = accounts.filter((account) => account.status === "bumping").length;
@@ -157,7 +121,7 @@ export default function BumpingConfig() {
         setPresets(normalized);
       } catch {
         if (!active) return;
-        setPresets(FALLBACK_PRESETS);
+        setPresets(TIMING_PRESETS);
       }
     };
 
@@ -187,8 +151,20 @@ export default function BumpingConfig() {
       return;
     }
 
-    if (!WINDOW_REGEX.test(form.runtimeWindow)) {
-      showToast("Runtime Window must match HH:MM-HH:MM", "error");
+    if (!form.runFromTime.trim()) {
+      showToast("Run Account From is required", "error");
+      return;
+    }
+
+    if (!form.runToTime.trim()) {
+      showToast("Run Account To is required", "error");
+      return;
+    }
+
+    const runtimeWindow = buildRuntimeWindowFromClockTimes(form.runFromTime, form.runToTime);
+    const runtimeRange = runtimeWindow ? getRuntimeWindowClockRange(runtimeWindow) : null;
+    if (!runtimeWindow) {
+      showToast("Run account time range is invalid", "error");
       return;
     }
 
@@ -204,10 +180,18 @@ export default function BumpingConfig() {
 
     const patch = {
       baseInterval,
+      baseIntervalMinutes: baseInterval,
       randomMin,
+      randomMinMinutes: randomMin,
       randomMax,
-      runtimeWindow: form.runtimeWindow,
-      maxDailyRuntime
+      randomMaxMinutes: randomMax,
+      runtimeWindow,
+      runtimeStart: runtimeRange?.start24h,
+      runtimeEnd: runtimeRange?.end24h,
+      runtimeStartTime: form.runFromTime.trim(),
+      runtimeEndTime: form.runToTime.trim(),
+      maxDailyRuntime,
+      maxDailyRuntimeHours: maxDailyRuntime
     };
 
     setSaving(true);
@@ -251,12 +235,16 @@ export default function BumpingConfig() {
       const values = payload.values || {};
 
       setSelectedPreset(preset.key);
+      const runtimeRange = getRuntimeWindowClockRange(
+        String(values.runtimeWindow ?? preset.runtimeWindow)
+      );
       setForm((prev) => ({
         ...prev,
         baseInterval: String(values.baseInterval ?? preset.baseInterval),
         randomMin: String(values.randomMin ?? preset.randomMin),
         randomMax: String(values.randomMax ?? preset.randomMax),
-        runtimeWindow: String(values.runtimeWindow ?? preset.runtimeWindow)
+        runFromTime: runtimeRange.start,
+        runToTime: runtimeRange.end
       }));
 
       await fetchAccounts();
@@ -288,6 +276,9 @@ export default function BumpingConfig() {
 
           <p className="opacity-70 mt-1">
             Configure bumping cadence and apply quick presets across accounts
+          </p>
+          <p className="mt-2 text-xs uppercase tracking-[0.2em] text-cyan-300">
+            Timezone: {DEFAULT_TIMEZONE_LABEL}
           </p>
         </div>
 
@@ -375,7 +366,7 @@ export default function BumpingConfig() {
                     Interval {preset.baseInterval}m, random {preset.randomMin}-{preset.randomMax}m
                   </div>
                   <div className="text-xs opacity-70 mt-1">
-                    Window {preset.runtimeWindow}
+                    Run {formatRuntimeWindowBDT(preset.runtimeWindow)}
                   </div>
                 </button>
               );
@@ -414,11 +405,28 @@ export default function BumpingConfig() {
           <h3 className="font-semibold mb-4">Runtime Settings</h3>
 
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <InputField
-              label="Runtime Window"
-              value={form.runtimeWindow}
-              onChange={(value) => setField("runtimeWindow", value)}
-              description="Format: HH:MM-HH:MM (example: 09:00-17:00)"
+            <TimePickerField
+              label="Run Account From"
+              value={form.runFromTime}
+              onChange={(value) => setField("runFromTime", value)}
+              hint="Bangladesh time (UTC+6)"
+              labelClassName="block text-sm mb-2 opacity-70"
+              helperClassName="text-xs opacity-60 mt-2"
+              selectClassName="themeField w-full px-3 py-2 rounded-lg outline-none transition"
+              rowClassName="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(96px,0.8fr)] gap-2 items-center max-sm:grid-cols-2"
+              separatorClassName="text-lg opacity-70 text-center max-sm:hidden"
+            />
+
+            <TimePickerField
+              label="Run Account To"
+              value={form.runToTime}
+              onChange={(value) => setField("runToTime", value)}
+              hint="Bangladesh time (UTC+6)"
+              labelClassName="block text-sm mb-2 opacity-70"
+              helperClassName="text-xs opacity-60 mt-2"
+              selectClassName="themeField w-full px-3 py-2 rounded-lg outline-none transition"
+              rowClassName="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(96px,0.8fr)] gap-2 items-center max-sm:grid-cols-2"
+              separatorClassName="text-lg opacity-70 text-center max-sm:hidden"
             />
 
             <InputField

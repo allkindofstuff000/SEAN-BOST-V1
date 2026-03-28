@@ -9,7 +9,19 @@ const {
   isConfigured
 } = require("../utils/captchaSolver");
 const { logActivity } = require("../utils/activityLogger");
+const { sendTelegramEvent } = require("../utils/telegram");
+const { getOrCreateAppSettings } = require("../utils/appSettings");
 const { normalizeUserId } = require("../utils/socketEvents");
+const {
+  DEFAULT_TIMEZONE,
+  calculateEffectiveDelayMs,
+  computeNextRunSchedule,
+  buildDailyRuntimeStatePatch,
+  buildScheduleDecisionLogPayload,
+  evaluateRuntimeAvailability,
+  isWithinRuntimeWindowAt,
+  resolveAppTimingSettings
+} = require("../utils/timing");
 const {
   emitAccountUpdateEvent,
   emitToUserEvent
@@ -27,13 +39,13 @@ const COOLDOWN_MAX_WAIT_MS = Number(
   process.env.BUMP_COOLDOWN_MAX_WAIT_MS || 60 * 60 * 1000
 );
 const configuredMinPublishIntervalMinutes = Number(
-  process.env.BUMP_MIN_INTERVAL_MINUTES || 15
+  process.env.BUMP_MIN_INTERVAL_MINUTES || 0
 );
 const MIN_PUBLISH_INTERVAL_MINUTES = Number.isFinite(
   configuredMinPublishIntervalMinutes
 )
-  ? Math.max(15, configuredMinPublishIntervalMinutes)
-  : 15;
+  ? Math.max(0, configuredMinPublishIntervalMinutes)
+  : 0;
 const MIN_PUBLISH_INTERVAL_MS = Math.floor(
   MIN_PUBLISH_INTERVAL_MINUTES * 60 * 1000
 );
@@ -65,6 +77,32 @@ const HEARTBEAT_RUNNING_STATUSES = new Set([
   "awaiting_verification_code"
 ]);
 const BANNED_MESSAGE_SELECTOR = ".banned-message-small";
+const POSTS_LIST_READY_SELECTOR = [
+  "#managePublishAd",
+  "[id='managePublishAd']",
+  "button[id*='managePublishAd']",
+  "a[id*='managePublishAd']"
+].join(", ");
+const POSTS_LIST_NAVIGATION_TIMEOUT_MS = (() => {
+  const parsed = Number(process.env.POSTS_LIST_NAVIGATION_TIMEOUT_MS || 60000);
+  if (!Number.isFinite(parsed) || parsed < 10000) return 60000;
+  return Math.floor(parsed);
+})();
+const POSTS_LIST_READY_TIMEOUT_MS = (() => {
+  const parsed = Number(process.env.POSTS_LIST_READY_TIMEOUT_MS || 20000);
+  if (!Number.isFinite(parsed) || parsed < 5000) return 20000;
+  return Math.floor(parsed);
+})();
+const POST_CLICK_NAVIGATION_TIMEOUT_MS = (() => {
+  const parsed = Number(process.env.POST_CLICK_NAVIGATION_TIMEOUT_MS || 15000);
+  if (!Number.isFinite(parsed) || parsed < 3000) return 15000;
+  return Math.floor(parsed);
+})();
+const NAVIGATION_TIMEOUT_RECYCLE_THRESHOLD = (() => {
+  const parsed = Number(process.env.NAVIGATION_TIMEOUT_RECYCLE_THRESHOLD || 3);
+  if (!Number.isFinite(parsed) || parsed < 1) return 3;
+  return Math.floor(parsed);
+})();
 
 function isPostsListUrl(url) {
   return String(url || "").includes("/users/posts/list");
@@ -153,6 +191,56 @@ const STALE_START_RECOVERY_MS = (() => {
   if (!Number.isFinite(parsed) || parsed < 0) return 2 * 60 * 1000;
   return Math.floor(parsed);
 })();
+const WORKER_WATCHDOG_INTERVAL_MS = (() => {
+  const parsed = Number(process.env.WORKER_WATCHDOG_INTERVAL_MS || 30 * 1000);
+  if (!Number.isFinite(parsed) || parsed < 5000) return 30 * 1000;
+  return Math.floor(parsed);
+})();
+const WORKER_STALL_MIN_MS = (() => {
+  const parsed = Number(process.env.WORKER_STALL_MIN_MS || 5 * 60 * 1000);
+  if (!Number.isFinite(parsed) || parsed < 60 * 1000) return 5 * 60 * 1000;
+  return Math.floor(parsed);
+})();
+const WORKER_STALL_RECOVERY_DELAY_MS = (() => {
+  const parsed = Number(process.env.WORKER_STALL_RECOVERY_DELAY_MS || 5000);
+  if (!Number.isFinite(parsed) || parsed < 1000) return 5000;
+  return Math.floor(parsed);
+})();
+const WORKER_STALL_MAX_RECOVERIES = (() => {
+  const parsed = Number(process.env.WORKER_STALL_MAX_RECOVERIES || 2);
+  if (!Number.isFinite(parsed) || parsed < 1) return 2;
+  return Math.floor(parsed);
+})();
+const TELEGRAM_RETRY_NOTIFY_THRESHOLD_MS = (() => {
+  const parsed = Number(process.env.TELEGRAM_RETRY_NOTIFY_THRESHOLD_MS || 60 * 1000);
+  if (!Number.isFinite(parsed) || parsed < 0) return 60 * 1000;
+  return Math.floor(parsed);
+})();
+const RUNTIME_PROGRESS_STATUSES = new Set([
+  "running",
+  "bumping",
+  "waiting_cooldown",
+  "retry_scheduled",
+  "stalled"
+]);
+const WATCHDOG_MONITORED_STATUSES = new Set([
+  "running",
+  "bumping",
+  "waiting_cooldown",
+  "retry_scheduled",
+  "stalled"
+]);
+const SUCCESSFUL_CYCLE_OUTCOMES = new Set([
+  "success",
+  "cooldown",
+  "stalled_recovered",
+  "skipped"
+]);
+const RECOVERY_CYCLE_OUTCOMES = new Set([
+  "success",
+  "cooldown",
+  "stalled_recovered"
+]);
 
 const runningWorkers = new Map();
 const accountRuntimeRegistry = new Map();
@@ -244,6 +332,121 @@ function getRunningWorkerEntry(accountOrId, options = {}) {
   };
 }
 
+function toTimestampMs(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.floor(value);
+  }
+
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function toIsoDate(value) {
+  const timestamp = toTimestampMs(value);
+  if (!Number.isFinite(timestamp)) {
+    return null;
+  }
+  return new Date(timestamp).toISOString();
+}
+
+function normalizeRuntimeStatus(value, fallback = "stopped") {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+
+  if (normalized === "active") {
+    return "running";
+  }
+
+  return normalized;
+}
+
+function getRuntimeProgressTimestamp(entry) {
+  return (
+    toTimestampMs(entry?.lastProgressAt) ||
+    toTimestampMs(entry?.lastCycleCompletedAt) ||
+    toTimestampMs(entry?.lastCycleStartedAt) ||
+    toTimestampMs(entry?.startedAt) ||
+    Date.now()
+  );
+}
+
+function sanitizeRuntimeEntry(entry = {}) {
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+
+  return {
+    accountId: String(entry.accountId || ""),
+    email: String(entry.email || "").trim(),
+    userId: normalizeUserId(entry.userId),
+    proxyIp: normalizeProxyIp(entry.proxyIp || ""),
+    status: normalizeRuntimeStatus(entry.status, "idle"),
+    currentStep: String(entry.currentStep || "").trim(),
+    currentUrl: String(entry.currentUrl || "").trim(),
+    cycleCount: Number(entry.cycleCount || 0),
+    consecutiveFailures: Number(entry.consecutiveFailures || 0),
+    stallCount: Number(entry.stallCount || 0),
+    startedAt: toIsoDate(entry.startedAt),
+    lastUpdatedAt: toIsoDate(entry.lastUpdatedAt),
+    lastProgressAt: toIsoDate(entry.lastProgressAt),
+    lastCycleStartedAt: toIsoDate(entry.lastCycleStartedAt),
+    lastCycleCompletedAt: toIsoDate(entry.lastCycleCompletedAt),
+    lastSuccessfulTaskAt: toIsoDate(entry.lastSuccessfulTaskAt),
+    nextScheduledAt: toIsoDate(entry.nextScheduledAt),
+    cycleActive: Boolean(entry.cycleActive),
+    cycleOutcome: String(entry.cycleOutcome || "").trim(),
+    cycleMessage: String(entry.cycleMessage || "").trim(),
+    expectedCycleIntervalMs: Number(entry.expectedCycleIntervalMs || 0),
+    stallAlertOpen: Boolean(entry.stallAlertOpen),
+    stallRecoveryAttempts: Number(entry.stallRecoveryAttempts || 0),
+    waitingForRecovery: Boolean(entry.waitingForRecovery),
+    lastRecoveryAt: toIsoDate(entry.lastRecoveryAt),
+    lastStallAlertAt: toIsoDate(entry.lastStallAlertAt),
+    nextRetryAt: toIsoDate(entry.nextRetryAt),
+    schedulingTimezone: String(entry.schedulingTimezone || DEFAULT_TIMEZONE),
+    timezoneLabel: String(entry.timezoneLabel || ""),
+    uiTimeFormat: String(entry.uiTimeFormat || ""),
+    selectedRandomDelayMinutes: Number(entry.selectedRandomDelayMinutes || 0),
+    dailyRuntimeDayKey: String(entry.dailyRuntimeDayKey || ""),
+    dailyRuntimeUsedMs: Number(entry.dailyRuntimeUsedMs || 0),
+    consecutiveNavigationTimeouts: Number(entry.consecutiveNavigationTimeouts || 0),
+    lastNavigationTimeoutAt: toIsoDate(entry.lastNavigationTimeoutAt),
+    rawNextRunAt: toIsoDate(entry.rawNextRunAt),
+    adjustedNextRunAt: toIsoDate(entry.adjustedNextRunAt),
+    lastScheduleDecision: String(entry.lastScheduleDecision || "").trim(),
+    lastScheduleReason: String(entry.lastScheduleReason || "").trim()
+  };
+}
+
+async function emitWorkerRuntimeEvent(accountOrId, eventName, message = "", extra = {}, options = {}) {
+  const ref = findAccountRegistryEntry(accountOrId, {
+    userId: options?.userId
+  });
+  const entry = sanitizeRuntimeEntry(ref?.entry || {});
+  const userId = normalizeUserId(options?.userId || entry?.userId);
+
+  if (!entry || !entry.accountId || !userId) {
+    return false;
+  }
+
+  return emitToUserEvent(userId, eventName, {
+    accountId: entry.accountId,
+    email: entry.email,
+    status: entry.status,
+    currentStep: entry.currentStep,
+    lastCycleCompletedAt: entry.lastCycleCompletedAt,
+    nextScheduledAt: entry.nextScheduledAt,
+    message: String(message || "").trim(),
+    ...extra
+  }).catch(() => false);
+}
+
 function setRunningWorker(account, worker, extra = {}) {
   const accountId = normalizeAccountId(account);
   if (!accountId) return "";
@@ -252,6 +455,9 @@ function setRunningWorker(account, worker, extra = {}) {
   const workerKey = buildWorkerKey(userId, accountId);
   const proxyIp = normalizeProxyIp(resolveProxyLabel(account, extra?.proxyIp || ""));
   const email = String(account?.email || "").trim();
+  const existing = findAccountRegistryEntry(account, {
+    userId
+  })?.entry;
 
   const stopBumping = async (reason = "") => {
     await requestStop(accountId, {
@@ -271,13 +477,30 @@ function setRunningWorker(account, worker, extra = {}) {
   });
 
   accountRuntimeRegistry.set(workerKey, {
+    ...existing,
     accountId,
     userId,
     email,
     proxyIp,
-    status: "running",
+    status: normalizeRuntimeStatus(extra?.status || existing?.status || "starting"),
     stopBumping,
-    startedAt: Number(extra?.startedAt || Date.now()),
+    startedAt: Number(extra?.startedAt || existing?.startedAt || Date.now()),
+    lastProgressAt: Number(existing?.lastProgressAt || Date.now()),
+    cycleCount: Number(existing?.cycleCount || 0),
+    consecutiveFailures: Number(existing?.consecutiveFailures || 0),
+    stallCount: Number(existing?.stallCount || 0),
+    stallAlertOpen: Boolean(existing?.stallAlertOpen),
+    stallRecoveryAttempts: Number(existing?.stallRecoveryAttempts || 0),
+    schedulingTimezone: String(existing?.schedulingTimezone || DEFAULT_TIMEZONE),
+    timezoneLabel: String(existing?.timezoneLabel || ""),
+    uiTimeFormat: String(existing?.uiTimeFormat || ""),
+    selectedRandomDelayMinutes: Number(existing?.selectedRandomDelayMinutes || 0),
+    dailyRuntimeDayKey: String(existing?.dailyRuntimeDayKey || ""),
+    dailyRuntimeUsedMs: Number(existing?.dailyRuntimeUsedMs || 0),
+    rawNextRunAt: existing?.rawNextRunAt || null,
+    adjustedNextRunAt: existing?.adjustedNextRunAt || null,
+    lastScheduleDecision: String(existing?.lastScheduleDecision || ""),
+    lastScheduleReason: String(existing?.lastScheduleReason || ""),
     lastUpdatedAt: Date.now()
   });
 
@@ -291,12 +514,14 @@ function deleteRunningWorker(accountOrId, options = {}) {
   const deleted = runningWorkers.delete(key);
   const existing = accountRuntimeRegistry.get(key);
   if (existing) {
-    const nextStatus = String(options?.nextStatus || existing.status || "stopped")
-      .trim()
-      .toLowerCase();
+    const nextStatus = normalizeRuntimeStatus(
+      options?.nextStatus || existing.status || "stopped",
+      "stopped"
+    );
     accountRuntimeRegistry.set(key, {
       ...existing,
-      status: nextStatus === "blocked" ? "blocked" : "stopped",
+      status: nextStatus,
+      cycleActive: false,
       stopBumping: null,
       lastUpdatedAt: Date.now()
     });
@@ -365,12 +590,6 @@ function upsertAccountRegistryEntry(accountOrId, patch = {}, options = {}) {
   const userId = requestedUserId || normalizeUserId(existing?.userId);
   const registryKey = existingRef?.key || buildWorkerKey(userId, accountId) || accountId;
 
-  const statusValue = String(patch?.status || existing?.status || "stopped")
-    .trim()
-    .toLowerCase();
-  const nextStatus =
-    statusValue === "running" || statusValue === "blocked" ? statusValue : "stopped";
-
   const hasStopBumpingPatch = Object.prototype.hasOwnProperty.call(patch, "stopBumping");
   const resolvedProxyIp = normalizeProxyIp(
     patch?.proxyIp ||
@@ -378,18 +597,59 @@ function upsertAccountRegistryEntry(accountOrId, patch = {}, options = {}) {
       (typeof accountOrId === "object" ? resolveProxyLabel(accountOrId, "") : "")
   );
 
+  const normalizedPatch = {
+    ...patch
+  };
+
+  if (Object.prototype.hasOwnProperty.call(normalizedPatch, "status")) {
+    normalizedPatch.status = normalizeRuntimeStatus(normalizedPatch.status, existing?.status || "idle");
+  }
+
+  for (const field of [
+    "startedAt",
+    "lastUpdatedAt",
+    "lastProgressAt",
+    "lastCycleStartedAt",
+    "lastCycleCompletedAt",
+    "lastSuccessfulTaskAt",
+    "nextScheduledAt",
+    "lastRecoveryAt",
+    "lastStallAlertAt",
+    "lastNavigationTimeoutAt",
+    "nextRetryAt"
+  ]) {
+    if (Object.prototype.hasOwnProperty.call(normalizedPatch, field)) {
+      normalizedPatch[field] = toTimestampMs(normalizedPatch[field]);
+    }
+  }
+
   const nextEntry = {
     ...existing,
     accountId,
     userId,
     email: String(
-      patch?.email ||
+      normalizedPatch?.email ||
         existing?.email ||
         (typeof accountOrId === "object" ? accountOrId?.email || "" : "")
     ).trim(),
     proxyIp: resolvedProxyIp,
-    status: nextStatus,
-    stopBumping: hasStopBumpingPatch ? patch.stopBumping : existing?.stopBumping || null,
+    ...normalizedPatch,
+    status: normalizeRuntimeStatus(
+      normalizedPatch?.status || existing?.status || "idle",
+      "idle"
+    ),
+    cycleCount: Number(normalizedPatch?.cycleCount ?? existing?.cycleCount ?? 0),
+    consecutiveFailures: Number(
+      normalizedPatch?.consecutiveFailures ?? existing?.consecutiveFailures ?? 0
+    ),
+    stallCount: Number(normalizedPatch?.stallCount ?? existing?.stallCount ?? 0),
+    stallRecoveryAttempts: Number(
+      normalizedPatch?.stallRecoveryAttempts ?? existing?.stallRecoveryAttempts ?? 0
+    ),
+    cycleActive: Boolean(
+      normalizedPatch?.cycleActive ?? existing?.cycleActive ?? false
+    ),
+    stopBumping: hasStopBumpingPatch ? normalizedPatch.stopBumping : existing?.stopBumping || null,
     lastUpdatedAt: Date.now()
   };
 
@@ -398,6 +658,84 @@ function upsertAccountRegistryEntry(accountOrId, patch = {}, options = {}) {
     key: registryKey,
     entry: nextEntry
   };
+}
+
+function updateRuntimeRegistryEntry(accountOrId, patch = {}, options = {}) {
+  const ref = upsertAccountRegistryEntry(accountOrId, patch, options);
+  return ref?.entry || null;
+}
+
+function getWorkerDebugSnapshot(accountOrId, options = {}) {
+  const ref = findAccountRegistryEntry(accountOrId, options);
+  if (!ref?.entry) {
+    return null;
+  }
+
+  const entry = sanitizeRuntimeEntry(ref.entry);
+  if (!entry) {
+    return null;
+  }
+
+  return {
+    ...entry,
+    progressAgeMs: Math.max(0, Date.now() - getRuntimeProgressTimestamp(ref.entry))
+  };
+}
+
+function calculateWatchdogThresholdMs(entry = {}) {
+  const expectedCycleIntervalMs = Number(entry?.expectedCycleIntervalMs || 0);
+  const nextScheduledAtMs = toTimestampMs(entry?.nextScheduledAt);
+  const lastCycleCompletedAtMs = toTimestampMs(entry?.lastCycleCompletedAt);
+  const scheduledWindowMs =
+    Number.isFinite(nextScheduledAtMs) && Number.isFinite(lastCycleCompletedAtMs)
+      ? Math.max(0, nextScheduledAtMs - lastCycleCompletedAtMs)
+      : 0;
+  const candidateMs = Math.max(expectedCycleIntervalMs, scheduledWindowMs);
+  return Math.max(WORKER_STALL_MIN_MS, candidateMs > 0 ? candidateMs * 2 : 0);
+}
+
+function createCycleResult(overrides = {}) {
+  return {
+    ok: false,
+    outcome: "retryable_failure",
+    message: "Cycle produced no valid outcome",
+    nextDelayMs: undefined,
+    metadata: {},
+    ...overrides
+  };
+}
+
+function normalizeCycleResult(result) {
+  const outcome = String(result?.outcome || "retryable_failure").trim().toLowerCase();
+  const normalized = createCycleResult({
+    ...result,
+    outcome: outcome || "retryable_failure",
+    message: String(result?.message || "Cycle produced no valid outcome").trim()
+  });
+
+  if (!normalized.message) {
+    normalized.message = "Cycle produced no valid outcome";
+  }
+
+  if (!normalized.outcome) {
+    normalized.outcome = "retryable_failure";
+  }
+
+  if (
+    normalized.nextDelayMs !== undefined &&
+    normalized.nextDelayMs !== null &&
+    !Number.isFinite(Number(normalized.nextDelayMs))
+  ) {
+    normalized.nextDelayMs = undefined;
+  } else if (normalized.nextDelayMs !== undefined && normalized.nextDelayMs !== null) {
+    normalized.nextDelayMs = Math.max(0, Math.floor(Number(normalized.nextDelayMs)));
+  }
+
+  if (!normalized.metadata || typeof normalized.metadata !== "object" || Array.isArray(normalized.metadata)) {
+    normalized.metadata = {};
+  }
+
+  return normalized;
 }
 
 function listRunningRegistryEntriesByProxy(proxyIp, options = {}) {
@@ -587,33 +925,11 @@ function getCurrentMinutesForTimezone(timezone) {
 }
 
 function isWithinRuntimeWindow(windowString, timezone = "") {
-  if (!windowString) return true;
-
-  const [start, end] = windowString.split("-");
-  if (!start || !end) return true;
-
-  const currentMinutes = getCurrentMinutesForTimezone(timezone);
-
-  const [startHour, startMin] = start.split(":").map(Number);
-  const [endHour, endMin] = end.split(":").map(Number);
-
-  if (
-    !Number.isFinite(startHour) ||
-    !Number.isFinite(startMin) ||
-    !Number.isFinite(endHour) ||
-    !Number.isFinite(endMin)
-  ) {
-    return true;
-  }
-
-  const startMinutes = startHour * 60 + startMin;
-  const endMinutes = endHour * 60 + endMin;
-
-  if (startMinutes <= endMinutes) {
-    return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
-  }
-
-  return currentMinutes >= startMinutes || currentMinutes <= endMinutes;
+  return isWithinRuntimeWindowAt(
+    new Date(),
+    windowString,
+    String(timezone || "").trim() || DEFAULT_TIMEZONE
+  );
 }
 
 async function ensureCookiesDir() {
@@ -693,10 +1009,10 @@ function getSelfTestConfig(account) {
 }
 
 function normalizeBumpConfig(account) {
-  const baseInterval = Math.max(1, toNumber(account.baseInterval, 30));
-  const randomMin = Math.max(0, toNumber(account.randomMin, 0));
-  const randomMax = Math.max(randomMin, toNumber(account.randomMax, randomMin));
-  const maxDailyRuntime = Math.max(1, toNumber(account.maxDailyRuntime, 8));
+  const baseInterval = Math.max(1, toNumber(account.baseIntervalMinutes ?? account.baseInterval, 30));
+  const randomMin = Math.max(0, toNumber(account.randomMinMinutes ?? account.randomMin, 0));
+  const randomMax = Math.max(randomMin, toNumber(account.randomMaxMinutes ?? account.randomMax, randomMin));
+  const maxDailyRuntime = Math.max(1, toNumber(account.maxDailyRuntimeHours ?? account.maxDailyRuntime, 8));
   const maxDailyBumpsRaw = toNumber(account.maxDailyBumps, 100);
   const maxDailyBumps = Number.isFinite(maxDailyBumpsRaw)
     ? Math.max(1, maxDailyBumpsRaw)
@@ -757,6 +1073,26 @@ function setWorkerStep(state, step, page) {
   if (url) {
     state.currentUrl = url;
   }
+
+  if (state.accountId) {
+    updateRuntimeRegistryEntry(
+      {
+        _id: state.accountId,
+        userId: state.userId,
+        email: state.email
+      },
+      {
+        status: normalizeRuntimeStatus(state.currentStatus || "idle", "idle"),
+        currentStep: state.currentStep,
+        currentUrl: state.currentUrl || "",
+        cycleActive: Boolean(state.cycleActive),
+        lastProgressAt: state.lastProgressAt || Date.now()
+      },
+      {
+        userId: state.userId
+      }
+    );
+  }
 }
 
 async function assertAccountNotBanned(page, account, state, options = {}) {
@@ -794,6 +1130,7 @@ async function assertAccountNotBanned(page, account, state, options = {}) {
     status: "banned",
     waitingUntil: null,
     nextBumpAt: null,
+    nextScheduledStart: null,
     nextBumpDelayMs: null
   }).catch(() => null);
 
@@ -838,6 +1175,7 @@ async function assertAccountNotBanned(page, account, state, options = {}) {
     status: "banned",
     waitingUntil: null,
     nextBumpAt: null,
+    nextScheduledStart: null,
     nextBumpDelayMs: null
   });
 
@@ -1021,6 +1359,7 @@ function mapErrorTypeToStatus(type) {
   if (type === "proxy_failed") return "proxy_failed";
   if (type === "banned") return "banned";
   if (type === "awaiting_2fa") return "awaiting_2fa";
+  if (type === "stalled") return "retry_scheduled";
   return "error";
 }
 
@@ -1409,9 +1748,10 @@ async function loadCookies(page, account) {
 async function validateCookies(page, account = null, state = null, options = {}) {
   try {
     console.log("[COOKIES] Validating session via /users/posts/list ...");
-    await page.goto(POSTS_LIST_URL, {
-      waitUntil: "networkidle2",
-      timeout: 90000
+    await openPostsListWithReadiness(page, {
+      reason: "cookie_validation",
+      navigationTimeoutMs: POSTS_LIST_NAVIGATION_TIMEOUT_MS,
+      readinessTimeoutMs: POSTS_LIST_READY_TIMEOUT_MS
     });
 
     const valid = isPostsListUrl(page.url());
@@ -2030,19 +2370,50 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function clearStateTimeout(state, timerField) {
+  if (!state || !timerField || !state[timerField]) {
+    return;
+  }
+
+  clearTimeout(state[timerField]);
+  state[timerField] = null;
+}
+
 async function waitWithStop(state, waitMs) {
   let remainingMs = Math.max(0, Math.floor(waitMs || 0));
+  let interruptedByReschedule = false;
 
   while (remainingMs > 0 && !state.stopped && !state.forceCycle) {
     const step = Math.min(remainingMs, 5000);
-    await sleep(step);
+    await new Promise((resolve) => {
+      clearStateTimeout(state, "scheduledWaitTimer");
+      state.scheduledWaitTimer = setTimeout(resolve, step);
+      if (typeof state.scheduledWaitTimer?.unref === "function") {
+        state.scheduledWaitTimer.unref();
+      }
+    });
+    clearStateTimeout(state, "scheduledWaitTimer");
+
+    if (state.pendingScheduleOverride) {
+      const overrideNextBumpAtMs = Number(state.pendingScheduleOverride.nextBumpAtMs || 0);
+      state.pendingScheduleOverride = null;
+      if (Number.isFinite(overrideNextBumpAtMs) && overrideNextBumpAtMs > 0) {
+        remainingMs = Math.max(0, overrideNextBumpAtMs - Date.now());
+        interruptedByReschedule = true;
+        continue;
+      }
+    }
+
     remainingMs -= step;
   }
+
+  clearStateTimeout(state, "scheduledWaitTimer");
 
   return {
     completed: remainingMs <= 0,
     interruptedByStop: Boolean(state.stopped),
-    interruptedByWatchdog: Boolean(state.forceCycle)
+    interruptedByWatchdog: Boolean(state.forceCycle),
+    interruptedByReschedule
   };
 }
 
@@ -2115,29 +2486,73 @@ function toShortReason(message, fallback = "unknown") {
   return compact.length > 120 ? `${compact.slice(0, 117)}...` : compact;
 }
 
-async function logNextBumpSchedule(account, delayMs, options = {}) {
-  const safeDelayMs = Math.max(0, Math.floor(Number(delayMs || 0)));
+async function logNextBumpSchedule(account, scheduleOrDelay, options = {}) {
+  const schedule =
+    scheduleOrDelay && typeof scheduleOrDelay === "object" && !Array.isArray(scheduleOrDelay)
+      ? scheduleOrDelay
+      : {
+          nextRunAt: new Date((Number(options?.nowMs) || Date.now()) + Math.max(0, Math.floor(Number(scheduleOrDelay || 0)))),
+          nextDelayMs: Math.max(0, Math.floor(Number(scheduleOrDelay || 0)))
+        };
+  const safeDelayMs = Math.max(0, Math.floor(Number(schedule?.nextDelayMs || 0)));
   const nowMs = Number(options?.nowMs) || Date.now();
   const providedLastRunAt = options?.lastRunAt ? new Date(options.lastRunAt) : null;
   const lastRunAt = providedLastRunAt && !Number.isNaN(providedLastRunAt.valueOf())
     ? providedLastRunAt
     : new Date(nowMs);
-  const nextBumpAt = new Date(nowMs + safeDelayMs);
+  let nextBumpAt =
+    schedule?.nextRunAt && !Number.isNaN(new Date(schedule.nextRunAt).valueOf())
+      ? new Date(schedule.nextRunAt)
+      : new Date(nowMs + safeDelayMs);
+  if (nextBumpAt.valueOf() <= nowMs) {
+    nextBumpAt = new Date(nowMs + Math.max(1000, safeDelayMs));
+  }
   const totalSeconds = Math.max(1, Math.ceil(safeDelayMs / 1000));
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
-  const message = `Next bump scheduled: ${account.email}. Next in ${minutes} minute(s) ${seconds} second(s).`;
+  const scheduleDebug = buildScheduleDecisionLogPayload(schedule);
+  const scheduleSuffix =
+    schedule?.decision === "blocked_by_daily_runtime_cap"
+      ? " Daily runtime cap reached; deferred to next BDT window."
+      : schedule?.decision === "wait_until_next_valid_window"
+        ? " Adjusted to the next valid BDT runtime window."
+        : "";
+  const message = `Next bump scheduled: ${account.email}. Next in ${minutes} minute(s) ${seconds} second(s).${scheduleSuffix}`;
+  const workerStatePatch = {};
+  if (schedule?.dailyRuntimeDayKey) {
+    workerStatePatch.dailyRuntimeDayKey = String(schedule.dailyRuntimeDayKey || "");
+  }
+  if (schedule?.dailyRuntimeUsedMs !== undefined) {
+    workerStatePatch.dailyRuntimeUsedMs = Math.max(
+      0,
+      Math.floor(Number(schedule.dailyRuntimeUsedMs || 0))
+    );
+  }
 
   try {
-    await Account.findByIdAndUpdate(account._id, {
+    const setPatch = {
       nextBumpAt,
+      nextScheduledStart: nextBumpAt,
       lastBumpAt: lastRunAt,
       nextBumpDelayMs: safeDelayMs
+    };
+
+    Object.entries(workerStatePatch).forEach(([key, value]) => {
+      setPatch[`workerState.${key}`] = value;
+    });
+
+    await Account.findByIdAndUpdate(account._id, {
+      $set: setPatch
     }).catch(() => null);
 
     account.nextBumpAt = nextBumpAt;
+    account.nextScheduledStart = nextBumpAt;
     account.lastBumpAt = lastRunAt;
     account.nextBumpDelayMs = safeDelayMs;
+    account.workerState = {
+      ...(account.workerState || {}),
+      ...workerStatePatch
+    };
 
     await logActivity({
       level: "info",
@@ -2148,7 +2563,8 @@ async function logNextBumpSchedule(account, delayMs, options = {}) {
         nextBumpAt,
         lastRunAt,
         delayMs: safeDelayMs,
-        intervalMs: safeDelayMs
+        intervalMs: safeDelayMs,
+        ...scheduleDebug
       }
     }).catch(() => null);
 
@@ -2156,6 +2572,7 @@ async function logNextBumpSchedule(account, delayMs, options = {}) {
       account,
       {
         nextBumpAt: nextBumpAt.toISOString(),
+        nextScheduledStart: nextBumpAt.toISOString(),
         lastBumpAt: lastRunAt.toISOString(),
         nextBumpDelayMs: safeDelayMs
       },
@@ -2163,7 +2580,8 @@ async function logNextBumpSchedule(account, delayMs, options = {}) {
         nextRun: {
           nextRunAt: nextBumpAt.toISOString(),
           lastRunAt: lastRunAt.toISOString(),
-          intervalMs: safeDelayMs
+          intervalMs: safeDelayMs,
+          timing: scheduleDebug
         }
       }
     );
@@ -2190,11 +2608,8 @@ async function logNextBumpSchedule(account, delayMs, options = {}) {
 }
 
 function calculateRegularDelayMs(baseInterval, randomMin, randomMax) {
-  const randomOffsetMinutes =
-    randomMin + Math.random() * Math.max(0, randomMax - randomMin);
-  const configuredDelayMs = (baseInterval + randomOffsetMinutes) * 60 * 1000;
-  // Never schedule below the platform-safe minimum publish interval.
-  return Math.max(configuredDelayMs, MIN_PUBLISH_INTERVAL_MS, 1000);
+  const delay = calculateEffectiveDelayMs(baseInterval, randomMin, randomMax);
+  return Math.max(delay.effectiveDelayMs, MIN_PUBLISH_INTERVAL_MS, 1000);
 }
 
 function parseCountdownTimer(text) {
@@ -2487,8 +2902,115 @@ async function detectBumpCooldown(page) {
   };
 }
 
+function isNavigationTimeoutError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  if (!message) return false;
+  return (
+    message.includes("navigation timeout") ||
+    (message.includes("timeout") && message.includes("navigation")) ||
+    message.includes("timed out after waiting") ||
+    message.includes("timeout exceeded while waiting")
+  );
+}
+
+async function waitForPostsListReady(page, options = {}) {
+  const timeoutMs = Number(options?.timeoutMs || POSTS_LIST_READY_TIMEOUT_MS);
+  const step = String(options?.step || "posts_list_ready_check");
+  const domReadyTimeoutMs = Math.max(3000, Math.min(timeoutMs, 10000));
+
+  await page
+    .waitForFunction(
+      () =>
+        document.readyState === "interactive" ||
+        document.readyState === "complete",
+      {
+        timeout: domReadyTimeoutMs
+      }
+    )
+    .catch(() => null);
+
+  const readyVia = await Promise.any([
+    page.waitForSelector(POSTS_LIST_READY_SELECTOR, {
+      visible: true,
+      timeout: timeoutMs
+    }).then(() => "selector"),
+    page
+      .waitForFunction(
+        () => window.location.href.includes("/users/posts/list"),
+        {
+          timeout: timeoutMs
+        }
+      )
+      .then(() => "url")
+  ]).catch(() => null);
+
+  const currentUrl = getSafePageUrl(page);
+  if (readyVia || isPostsListUrl(currentUrl)) {
+    return {
+      ready: true,
+      via: readyVia || "current_url",
+      currentUrl
+    };
+  }
+
+  throw new Error(
+    `[BUMP] Posts list did not become ready during ${step}. Current URL: ${currentUrl || "unknown"}`
+  );
+}
+
+async function openPostsListWithReadiness(page, options = {}) {
+  const reason = String(options?.reason || "open_posts_list");
+  const navigationTimeoutMs = Number(
+    options?.navigationTimeoutMs || POSTS_LIST_NAVIGATION_TIMEOUT_MS
+  );
+  const readinessTimeoutMs = Number(
+    options?.readinessTimeoutMs || POSTS_LIST_READY_TIMEOUT_MS
+  );
+  let navigationError = null;
+
+  console.log(
+    `[BUMP] Opening posts list (${reason}) with domcontentloaded strategy...`
+  );
+
+  try {
+    await page.goto(POSTS_LIST_URL, {
+      waitUntil: "domcontentloaded",
+      timeout: navigationTimeoutMs
+    });
+  } catch (error) {
+    navigationError = error;
+    console.warn(
+      `[BUMP] Posts list navigation warning during ${reason}: ${error.message}`
+    );
+    if (!isNavigationTimeoutError(error)) {
+      throw error;
+    }
+  }
+
+  try {
+    return await waitForPostsListReady(page, {
+      timeoutMs: readinessTimeoutMs,
+      step: reason
+    });
+  } catch (readinessError) {
+    if (navigationError) {
+      throw navigationError;
+    }
+    throw readinessError;
+  }
+}
+
 async function returnToPostsList(page) {
-  if (page.url().includes("/success_publish/")) {
+  const currentUrl = getSafePageUrl(page);
+  if (isPostsListUrl(currentUrl)) {
+    await waitForPostsListReady(page, {
+      timeoutMs: Math.min(POSTS_LIST_READY_TIMEOUT_MS, 5000),
+      step: "already_on_posts_list"
+    }).catch(() => null);
+    return;
+  }
+
+  if (currentUrl.includes("/success_publish/")) {
     console.log("[BUMP] Redirected to success page.");
     const clickedMyPosts = await page.evaluate(() => {
       const candidates = Array.from(document.querySelectorAll("a, button"));
@@ -2515,17 +3037,37 @@ async function returnToPostsList(page) {
       console.log("[BUMP] Clicking My Posts link...");
       await page
         .waitForNavigation({
-          waitUntil: "networkidle2",
-          timeout: 45000
+          waitUntil: "domcontentloaded",
+          timeout: POST_CLICK_NAVIGATION_TIMEOUT_MS
         })
-        .catch(() => null);
+        .catch((error) => {
+          if (!isNavigationTimeoutError(error)) {
+            console.warn(
+              `[BUMP] My Posts navigation warning: ${error.message}`
+            );
+          }
+          return null;
+        });
+
+      const returnedToPosts = await waitForPostsListReady(page, {
+        timeoutMs: Math.min(POSTS_LIST_READY_TIMEOUT_MS, 5000),
+        step: "return_to_posts_list_click"
+      })
+        .then(() => true)
+        .catch(() => false);
+      if (returnedToPosts || isPostsListUrl(getSafePageUrl(page))) {
+        return;
+      }
+
+      console.warn(
+        "[BUMP] My Posts click did not settle on posts list. Falling back to direct navigation."
+      );
     }
   }
 
-  if (!page.url().includes("/users/posts/list")) {
-    await page.goto(POSTS_LIST_URL, {
-      waitUntil: "networkidle2",
-      timeout: 90000
+  if (!isPostsListUrl(getSafePageUrl(page))) {
+    await openPostsListWithReadiness(page, {
+      reason: "return_to_posts_list_fallback"
     });
   }
 }
@@ -2534,49 +3076,139 @@ async function startBumpLoop(page, account, state = { stopped: false }, options 
   const ip = options?.ip || "";
   const proxyLabel = resolveProxyLabel(account, ip);
   let currentBumpConfig = normalizeBumpConfig(account);
+  let currentAppTimingSettings = resolveAppTimingSettings(account.__appSettings || {});
   let loopExitReason = "completed";
   let bumpCount = Number(account.totalBumpsToday || 0);
   const selfTest = getSelfTestConfig(account);
   let selfTestCycleCount = 0;
   let selfTestPatternIndex = 0;
-
-  const refreshBumpConfig = async () => {
-    const latest = await Account.findById(account._id)
-      .select(
-        "baseInterval randomMin randomMax maxDailyRuntime maxDailyBumps runtimeWindow timezone"
-      )
-      .lean()
-      .catch(() => null);
-
-    if (latest) {
-      account.baseInterval = latest.baseInterval;
-      account.randomMin = latest.randomMin;
-      account.randomMax = latest.randomMax;
-      account.maxDailyRuntime = latest.maxDailyRuntime;
-      account.maxDailyBumps = latest.maxDailyBumps;
-      account.runtimeWindow = latest.runtimeWindow;
-      account.timezone = latest.timezone;
-    }
-
-    currentBumpConfig = normalizeBumpConfig(account);
-    return currentBumpConfig;
+  const runtimeRef = {
+    _id: account._id,
+    userId: account.userId,
+    email: account.email
   };
 
-  const WATCHDOG_INTERVAL_MS = 15 * 1000;
-  const WATCHDOG_OVERDUE_MS = 30 * 1000;
-  const WATCHDOG_ACTIVE_STATUSES = new Set([
-    "active",
-    "bumping",
-    "waiting_cooldown"
-  ]);
+  const updateRuntime = (patch = {}) =>
+    updateRuntimeRegistryEntry(runtimeRef, patch, {
+      userId: account.userId
+    });
+
+  const emitWorkerEvent = async (eventName, message, extra = {}) =>
+    emitWorkerRuntimeEvent(runtimeRef, eventName, message, extra, {
+      userId: account.userId
+    });
 
   const clearScheduledNextBump = () => {
     state.nextBumpAtMs = null;
+    state.nextScheduledAt = null;
+    state.rawNextRunAt = null;
+    state.adjustedNextRunAt = null;
+    state.selectedRandomDelayMinutes = 0;
+    state.lastScheduleDecision = "";
+    state.lastScheduleReason = "";
+    updateRuntime({
+      nextScheduledAt: null,
+      rawNextRunAt: null,
+      adjustedNextRunAt: null,
+      selectedRandomDelayMinutes: 0,
+      lastScheduleDecision: "",
+      lastScheduleReason: ""
+    });
   };
 
-  const setScheduledNextBump = (value) => {
-    const ts = new Date(value).getTime();
+  const setScheduledNextBump = (schedule = {}) => {
+    const ts = toTimestampMs(schedule.nextRunAt || schedule.adjustedNextRunAtIso);
     state.nextBumpAtMs = Number.isFinite(ts) ? ts : null;
+    state.nextScheduledAt = Number.isFinite(ts) ? ts : null;
+    state.rawNextRunAt = schedule.rawNextRunAtIso || null;
+    state.adjustedNextRunAt = schedule.adjustedNextRunAtIso || null;
+    state.selectedRandomDelayMinutes = Number(schedule.selectedRandomDelayMinutes || 0);
+    state.lastScheduleDecision = String(schedule.decision || "");
+    state.lastScheduleReason = String(schedule.reason || "");
+    state.dailyRuntimeDayKey = String(schedule.dailyRuntimeDayKey || state.dailyRuntimeDayKey || "");
+    state.dailyRuntimeUsedMs = Number(schedule.dailyRuntimeUsedMs || state.dailyRuntimeUsedMs || 0);
+    state.schedulingTimezone = String(
+      schedule.timezone || state.schedulingTimezone || DEFAULT_TIMEZONE
+    );
+    state.timezoneLabel = String(schedule.timezoneLabel || state.timezoneLabel || "");
+    state.uiTimeFormat = String(schedule.uiTimeFormat || state.uiTimeFormat || "");
+    const delayMs = Number(schedule.nextDelayMs || 0);
+    if (Number.isFinite(delayMs) && delayMs > 0) {
+      state.expectedCycleIntervalMs = Math.floor(delayMs);
+    }
+    account.workerState = {
+      ...(account.workerState || {}),
+      dailyRuntimeDayKey: state.dailyRuntimeDayKey,
+      dailyRuntimeUsedMs: state.dailyRuntimeUsedMs
+    };
+    state.dailyRuntimeAppliedForCycle = true;
+    updateRuntime({
+      nextScheduledAt: state.nextScheduledAt,
+      rawNextRunAt: state.rawNextRunAt,
+      adjustedNextRunAt: state.adjustedNextRunAt,
+      selectedRandomDelayMinutes: state.selectedRandomDelayMinutes,
+      dailyRuntimeDayKey: state.dailyRuntimeDayKey,
+      dailyRuntimeUsedMs: state.dailyRuntimeUsedMs,
+      schedulingTimezone: state.schedulingTimezone,
+      timezoneLabel: state.timezoneLabel,
+      uiTimeFormat: state.uiTimeFormat,
+      lastScheduleDecision: state.lastScheduleDecision,
+      lastScheduleReason: state.lastScheduleReason,
+      expectedCycleIntervalMs: Number(state.expectedCycleIntervalMs || 0)
+    });
+  };
+
+  const refreshBumpConfig = async () => {
+    const [latest, appSettings] = await Promise.all([
+      Account.findById(account._id)
+        .select(
+          "baseInterval baseIntervalMinutes randomMin randomMinMinutes randomMax randomMaxMinutes maxDailyRuntime maxDailyRuntimeHours maxDailyBumps runtimeStart runtimeEnd runtimeWindow timezone workerState nextScheduledStart"
+        )
+        .lean()
+        .catch(() => null),
+      getOrCreateAppSettings(account.userId).catch(() => null)
+    ]);
+
+    if (latest) {
+      account.baseInterval = latest.baseInterval;
+      account.baseIntervalMinutes = latest.baseIntervalMinutes;
+      account.randomMin = latest.randomMin;
+      account.randomMinMinutes = latest.randomMinMinutes;
+      account.randomMax = latest.randomMax;
+      account.randomMaxMinutes = latest.randomMaxMinutes;
+      account.maxDailyRuntime = latest.maxDailyRuntime;
+      account.maxDailyRuntimeHours = latest.maxDailyRuntimeHours;
+      account.maxDailyBumps = latest.maxDailyBumps;
+      account.runtimeStart = latest.runtimeStart;
+      account.runtimeEnd = latest.runtimeEnd;
+      account.runtimeWindow = latest.runtimeWindow;
+      account.timezone = latest.timezone;
+      account.nextScheduledStart = latest.nextScheduledStart;
+      account.workerState = latest.workerState || account.workerState || {};
+    }
+
+    if (appSettings) {
+      account.__appSettings = appSettings;
+      currentAppTimingSettings = resolveAppTimingSettings(appSettings);
+      state.schedulingTimezone = currentAppTimingSettings.timezone;
+      state.timezoneLabel = currentAppTimingSettings.timezoneLabel;
+      state.uiTimeFormat = currentAppTimingSettings.uiTimeFormat;
+    }
+
+    if (account.workerState?.dailyRuntimeDayKey) {
+      state.dailyRuntimeDayKey = String(account.workerState.dailyRuntimeDayKey || "");
+      state.dailyRuntimeUsedMs = Number(account.workerState.dailyRuntimeUsedMs || 0);
+    }
+
+    currentBumpConfig = normalizeBumpConfig(account);
+    updateRuntime({
+      schedulingTimezone: state.schedulingTimezone,
+      timezoneLabel: state.timezoneLabel,
+      uiTimeFormat: state.uiTimeFormat,
+      dailyRuntimeDayKey: state.dailyRuntimeDayKey,
+      dailyRuntimeUsedMs: state.dailyRuntimeUsedMs
+    });
+    return currentBumpConfig;
   };
 
   const stopBumpWatchdog = () => {
@@ -2594,16 +3226,17 @@ async function startBumpLoop(page, account, state = { stopped: false }, options 
       const nextBumpAtMs = Number(state.nextBumpAtMs || 0);
       if (!Number.isFinite(nextBumpAtMs) || nextBumpAtMs <= 0) return;
 
-      const status = String(state.currentStatus || "").trim().toLowerCase();
-      if (!WATCHDOG_ACTIVE_STATUSES.has(status)) return;
+      const status = normalizeRuntimeStatus(state.currentStatus || "", "idle");
+      if (!WATCHDOG_MONITORED_STATUSES.has(status)) return;
 
-      if (Date.now() > nextBumpAtMs + WATCHDOG_OVERDUE_MS) {
+      if (Date.now() > nextBumpAtMs + 30 * 1000) {
         if (!state.forceCycle) {
           state.forceCycle = true;
-          console.warn("[BUMP] Watchdog fired: next bump overdue, restarting cycle");
+          state.lastProgressAt = Date.now();
+          console.warn("[WATCHDOG] Next scheduled bump overdue, forcing cycle resume");
         }
       }
-    }, WATCHDOG_INTERVAL_MS);
+    }, 15 * 1000);
   };
 
   const setBumpingStatus = async () => {
@@ -2617,43 +3250,292 @@ async function startBumpLoop(page, account, state = { stopped: false }, options 
       status: "bumping",
       waitingUntil: null
     }).catch(() => null);
+    updateRuntime({
+      status: "bumping",
+      currentStep: state.currentStep,
+      waitingForRecovery: Boolean(state.waitingForRecovery)
+    });
   };
 
-  const scheduleNextBump = async (delayMs, options = {}) => {
-    const safeDelayMs = Math.max(1000, Math.floor(Number(delayMs || 0)));
+  const resetNavigationTimeoutCounter = () => {
+    if (
+      !Number(state.consecutiveNavigationTimeouts || 0) &&
+      !Number(state.lastNavigationTimeoutAt || 0)
+    ) {
+      return;
+    }
+
+    state.consecutiveNavigationTimeouts = 0;
+    state.lastNavigationTimeoutAt = null;
+    updateRuntime({
+      consecutiveNavigationTimeouts: 0,
+      lastNavigationTimeoutAt: null
+    });
+  };
+
+  const registerNavigationTimeout = (error, context = "") => {
+    state.consecutiveNavigationTimeouts =
+      Number(state.consecutiveNavigationTimeouts || 0) + 1;
+    state.lastNavigationTimeoutAt = Date.now();
+
+    updateRuntime({
+      consecutiveNavigationTimeouts: state.consecutiveNavigationTimeouts,
+      lastNavigationTimeoutAt: state.lastNavigationTimeoutAt
+    });
+
+    console.warn(
+      `[BUMP] Navigation timeout ${state.consecutiveNavigationTimeouts}/${NAVIGATION_TIMEOUT_RECYCLE_THRESHOLD} for ${account.email} at ${context || state.currentStep || "unknown"}: ${error.message}`
+    );
+
+    return (
+      state.consecutiveNavigationTimeouts >=
+      NAVIGATION_TIMEOUT_RECYCLE_THRESHOLD
+    );
+  };
+
+  const scheduleBrowserRecycleAfterTimeout = async (
+    schedule,
+    recycleReason,
+    metadata = {}
+  ) => {
+    const nextDelayMs = Number(schedule?.delayMs || 0);
+    const nextBumpAtIso =
+      schedule?.nextBumpAt && !Number.isNaN(new Date(schedule.nextBumpAt).valueOf())
+        ? new Date(schedule.nextBumpAt).toISOString()
+        : toIsoDate(state.nextScheduledAt);
+
+    state.stopped = true;
+    state.currentStatus = "retry_scheduled";
+    setWorkerStep(state, "browser_recycle_pending", page);
+    updateRuntime({
+      status: "retry_scheduled",
+      currentStep: state.currentStep,
+      cycleActive: false,
+      nextScheduledAt: state.nextScheduledAt,
+      waitingForRecovery: false,
+      consecutiveNavigationTimeouts: Number(
+        state.consecutiveNavigationTimeouts || 0
+      ),
+      lastNavigationTimeoutAt: state.lastNavigationTimeoutAt
+    });
+
+    console.warn(
+      `[BROWSER] Recycling browser for ${account.email} after ${state.consecutiveNavigationTimeouts} navigation timeouts. next=${nextBumpAtIso || "n/a"}`
+    );
+
+    await logActivity({
+      level: "warning",
+      message: `Browser recycle scheduled | ${account.email} | repeated navigation timeouts`,
+      ip,
+      email: account.email,
+      accountId: account._id,
+      metadata: {
+        telegram: false,
+        proxy: proxyLabel,
+        nextDelayMs,
+        nextScheduledAt: nextBumpAtIso,
+        consecutiveNavigationTimeouts: Number(
+          state.consecutiveNavigationTimeouts || 0
+        ),
+        reason: recycleReason,
+        ...metadata
+      }
+    }).catch(() => null);
+
+    await emitWorkerEvent(
+      "worker:status",
+      "Browser recycle scheduled after navigation timeouts",
+      {
+        nextDelayMs,
+        consecutiveNavigationTimeouts: Number(
+          state.consecutiveNavigationTimeouts || 0
+        )
+      }
+    );
+  };
+
+  const getCurrentCycleRuntimeMs = () => {
+    const startedAtMs = Number(state.lastCycleStartedAt || 0);
+    if (!Number.isFinite(startedAtMs) || startedAtMs <= 0) {
+      return 0;
+    }
+    return Math.max(0, Date.now() - startedAtMs);
+  };
+
+  const createManagedSchedule = (options = {}) => {
     const providedLastRunAt = options?.lastRunAt ? new Date(options.lastRunAt) : null;
     const accountLastBumpAt = account?.lastBumpAt ? new Date(account.lastBumpAt) : null;
-    const fallbackLastRunAt = new Date();
-    const lastRunAt =
+    const now = options?.now ? new Date(options.now) : new Date();
+    const fallbackLastRunAt = now;
+    const anchorAt =
       providedLastRunAt && !Number.isNaN(providedLastRunAt.valueOf())
         ? providedLastRunAt
         : accountLastBumpAt && !Number.isNaN(accountLastBumpAt.valueOf())
           ? accountLastBumpAt
           : fallbackLastRunAt;
 
-    const schedule = await logNextBumpSchedule(account, safeDelayMs, {
-      lastRunAt
+    const schedule = computeNextRunSchedule({
+      account,
+      appSettings: currentAppTimingSettings,
+      now,
+      anchorAt,
+      workerState: account.workerState || {},
+      additionalRuntimeMs: Number(options.additionalRuntimeMs || 0),
+      randomValue: options.randomValue,
+      overrideDelayMs: options.overrideDelayMs
+    });
+
+    return {
+      ...schedule,
+      anchorAt
+    };
+  };
+
+  const scheduleNextBump = async (options = {}) => {
+    const schedule = createManagedSchedule(options);
+    const safeDelayMs = Math.max(1000, Math.floor(Number(schedule.nextDelayMs || 0)));
+    schedule.nextDelayMs = safeDelayMs;
+
+    const persisted = await logNextBumpSchedule(account, schedule, {
+      lastRunAt: schedule.anchorAt
     });
 
     const nextBumpAt =
-      schedule?.nextBumpAt && !Number.isNaN(new Date(schedule.nextBumpAt).valueOf())
-        ? new Date(schedule.nextBumpAt)
+      persisted?.nextBumpAt && !Number.isNaN(new Date(persisted.nextBumpAt).valueOf())
+        ? new Date(persisted.nextBumpAt)
         : new Date(Date.now() + safeDelayMs);
 
-    setScheduledNextBump(nextBumpAt);
+    setScheduledNextBump(schedule);
 
     const totalSeconds = Math.max(1, Math.ceil(safeDelayMs / 1000));
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
     console.log(
-      `[BUMP] Scheduling next bump at ${nextBumpAt.toISOString()} (in ${minutes}m ${seconds}s)`
+      `[SCHEDULER] Next cycle for ${account.email} at ${nextBumpAt.toISOString()} (in ${minutes}m ${seconds}s) decision=${schedule.decision} reason=${schedule.reason}`
+    );
+    console.log(
+      `[SCHEDULER] account=${account.email} utc_now=${schedule.nowUtcIso} bdt_now=${schedule.nowBdtIso} last_bump=${schedule.lastBumpAtIso || "n/a"} base=${schedule.baseIntervalMinutes} random=${schedule.randomMinMinutes}-${schedule.randomMaxMinutes} selected=${Number(
+        schedule.selectedRandomDelayMinutes || 0
+      ).toFixed(3)} raw_next=${schedule.rawNextRunAtIso} adjusted_next=${schedule.adjustedNextRunAtIso} runtime_used_ms=${schedule.dailyRuntimeUsedMs} runtime_cap_ms=${schedule.maxDailyRuntimeMs}`
     );
 
     return {
       delayMs: safeDelayMs,
       nextBumpAt,
-      lastRunAt
+      lastRunAt: schedule.anchorAt,
+      schedule
     };
+  };
+
+  const isDeferredScheduleDecision = (scheduleEnvelope = {}) => {
+    const decision = String(
+      scheduleEnvelope?.schedule?.decision || scheduleEnvelope?.decision || ""
+    ).trim();
+    return (
+      decision === "wait_until_next_valid_window" ||
+      decision === "blocked_by_daily_runtime_cap"
+    );
+  };
+
+  const getDeferredExitReason = (scheduleEnvelope = {}) => {
+    const decision = String(
+      scheduleEnvelope?.schedule?.decision || scheduleEnvelope?.decision || ""
+    ).trim();
+    if (decision === "blocked_by_daily_runtime_cap") {
+      return "daily_runtime_cap_reached";
+    }
+    return "runtime_window_closed";
+  };
+
+  const pauseWorkerUntilScheduledStart = async (scheduleEnvelope = {}, message = "") => {
+    const schedule = scheduleEnvelope?.schedule || scheduleEnvelope || {};
+    const nextRunAt =
+      scheduleEnvelope?.nextBumpAt && !Number.isNaN(new Date(scheduleEnvelope.nextBumpAt).valueOf())
+        ? new Date(scheduleEnvelope.nextBumpAt)
+        : schedule?.nextRunAt && !Number.isNaN(new Date(schedule.nextRunAt).valueOf())
+          ? new Date(schedule.nextRunAt)
+          : null;
+    const nextRunIso = nextRunAt ? nextRunAt.toISOString() : null;
+    const nextDelayMs = Number(scheduleEnvelope?.delayMs ?? schedule?.nextDelayMs ?? 0);
+    const pauseStep =
+      getDeferredExitReason(scheduleEnvelope) === "daily_runtime_cap_reached"
+        ? "daily_runtime_cap_reached"
+        : "outside_runtime_window";
+
+    if (pauseStep === "outside_runtime_window") {
+      console.log(`[TIMER] Stopping account because runtime window ended: ${account.email}`);
+    } else {
+      console.log(`[TIMER] Stopping account because daily runtime cap was reached: ${account.email}`);
+    }
+
+    await updateStatus(account._id, "paused", {
+      ip,
+      email: account.email,
+      metadata: {
+        nextScheduledStart: nextRunIso,
+        reason: pauseStep
+      }
+    }).catch(() => null);
+    state.currentStatus = "paused";
+    setWorkerStep(state, pauseStep, page);
+
+    await Account.findByIdAndUpdate(account._id, {
+      status: "paused",
+      waitingUntil: null,
+      nextBumpAt: nextRunAt,
+      nextScheduledStart: nextRunAt,
+      nextBumpDelayMs: nextDelayMs,
+      cooldownMinutes: null,
+      lastCooldownDetected: null
+    }).catch(() => null);
+
+    emitAccountUpdate(
+      account,
+      {
+        status: "paused",
+        waitingUntil: null,
+        nextBumpAt: nextRunIso,
+        nextScheduledStart: nextRunIso,
+        nextBumpDelayMs: nextDelayMs,
+        cooldownMinutes: null
+      },
+      {
+        nextRun: {
+          nextRunAt: nextRunIso,
+          intervalMs: nextDelayMs,
+          timing: buildScheduleDecisionLogPayload(schedule)
+        }
+      }
+    );
+
+    updateRuntime({
+      status: "paused",
+      currentStep: pauseStep,
+      cycleActive: false,
+      nextScheduledAt: nextRunAt ? nextRunAt.valueOf() : null,
+      waitingForRecovery: false
+    });
+
+    if (message) {
+      await logActivity({
+        level: "warning",
+        message,
+        ip,
+        email: account.email,
+        accountId: account._id,
+        metadata: buildScheduleDecisionLogPayload(schedule)
+      }).catch(() => null);
+    }
+  };
+
+  const maybePauseForDeferredSchedule = async (scheduleEnvelope = {}, message = "") => {
+    if (!isDeferredScheduleDecision(scheduleEnvelope)) {
+      return false;
+    }
+
+    loopExitReason = getDeferredExitReason(scheduleEnvelope);
+    await pauseWorkerUntilScheduledStart(scheduleEnvelope, message);
+    return true;
   };
 
   const waitForScheduledDelay = async (delayMs) => {
@@ -2661,7 +3543,7 @@ async function startBumpLoop(page, account, state = { stopped: false }, options 
     const waitResult = await waitWithStop(state, delayMs);
     if (waitResult?.interruptedByWatchdog && !state.stopped) {
       state.forceCycle = false;
-      return false;
+      return true;
     }
     return !state.stopped;
   };
@@ -2669,6 +3551,301 @@ async function startBumpLoop(page, account, state = { stopped: false }, options 
   const getConfiguredDelayMs = () => {
     const { baseInterval, randomMin, randomMax } = currentBumpConfig;
     return calculateRegularDelayMs(baseInterval, randomMin, randomMax);
+  };
+
+  const beginCycle = () => {
+    if (state.cycleActive) {
+      console.warn(
+        `[SCHEDULER] Cycle already active for ${account.email}; skipping overlapping trigger`
+      );
+      return false;
+    }
+
+    state.cycleActive = true;
+    state.cycleCount = Number(state.cycleCount || 0) + 1;
+    state.lastCycleStartedAt = Date.now();
+    state.lastProgressAt = state.lastCycleStartedAt;
+    state.dailyRuntimeAppliedForCycle = false;
+    clearScheduledNextBump();
+    updateRuntime({
+      status: normalizeRuntimeStatus(state.currentStatus || "running", "running"),
+      currentStep: state.currentStep,
+      currentUrl: state.currentUrl || "",
+      cycleActive: true,
+      cycleCount: state.cycleCount,
+      lastCycleStartedAt: state.lastCycleStartedAt,
+      lastProgressAt: state.lastProgressAt,
+      cycleOutcome: "",
+      cycleMessage: ""
+    });
+    console.log(
+      `[CYCLE] start account=${account.email} cycle=${state.cycleCount} status=${state.currentStatus || "running"} step=${state.currentStep || "idle"}`
+    );
+    return true;
+  };
+
+  const maybeSendRecoveryNotice = async (result) => {
+    if (!state.stallAlertOpen && !state.waitingForRecovery) {
+      return;
+    }
+
+    state.stallAlertOpen = false;
+    state.waitingForRecovery = false;
+    state.stallRecoveryAttempts = 0;
+    state.lastRecoveryAt = Date.now();
+
+    updateRuntime({
+      stallAlertOpen: false,
+      waitingForRecovery: false,
+      stallRecoveryAttempts: 0,
+      lastRecoveryAt: state.lastRecoveryAt,
+      status: normalizeRuntimeStatus(state.currentStatus || "running", "running")
+    });
+
+    await sendTelegramEvent("worker_recovered", {
+      userId: account.userId,
+      accountId: account._id,
+      email: account.email,
+      nextDelayMs: Number(result?.nextDelayMs || state.expectedCycleIntervalMs || 0),
+      currentStep: state.currentStep,
+      metadata: {
+        outcome: result?.outcome || "",
+        proxy: proxyLabel
+      }
+    }).catch(() => null);
+
+    await emitWorkerEvent("worker:recovered", "Worker recovered", {
+      nextDelayMs: Number(result?.nextDelayMs || state.expectedCycleIntervalMs || 0),
+      recoveryOutcome: result?.outcome || ""
+    });
+  };
+
+  const finalizeCycle = async (rawResult) => {
+    const result = normalizeCycleResult(rawResult);
+    const completedAt = Date.now();
+    const previousFailedCycle = Boolean(state.previousCycleFailed);
+    const retryDelayMs = Number(result.nextDelayMs || 0);
+    const nextScheduledAtIso = toIsoDate(state.nextScheduledAt);
+    const cycleRuntimeMs = getCurrentCycleRuntimeMs();
+    const navigationTimedOut = Boolean(result.metadata?.navigationTimeout);
+    if (!state.dailyRuntimeAppliedForCycle) {
+      const dailyRuntimePatch = buildDailyRuntimeStatePatch(
+        account.workerState || {},
+        completedAt,
+        state.schedulingTimezone || DEFAULT_TIMEZONE,
+        cycleRuntimeMs
+      );
+      state.dailyRuntimeDayKey = dailyRuntimePatch.dailyRuntimeDayKey;
+      state.dailyRuntimeUsedMs = dailyRuntimePatch.dailyRuntimeUsedMs;
+      account.workerState = {
+        ...(account.workerState || {}),
+        dailyRuntimeDayKey: dailyRuntimePatch.dailyRuntimeDayKey,
+        dailyRuntimeUsedMs: dailyRuntimePatch.dailyRuntimeUsedMs
+      };
+      await updateWorkerState(
+        account._id,
+        {
+          dailyRuntimeDayKey: dailyRuntimePatch.dailyRuntimeDayKey,
+          dailyRuntimeUsedMs: dailyRuntimePatch.dailyRuntimeUsedMs
+        }
+      ).catch(() => null);
+    }
+    let runtimeStatus = normalizeRuntimeStatus(state.currentStatus || "running", "running");
+
+    state.cycleActive = false;
+    state.lastCycleCompletedAt = completedAt;
+    state.lastProgressAt = completedAt;
+    state.lastCycleOutcome = result.outcome;
+    state.lastCycleMessage = result.message;
+
+    if (SUCCESSFUL_CYCLE_OUTCOMES.has(result.outcome)) {
+      state.consecutiveFailures = 0;
+    } else if (
+      result.outcome === "retryable_failure" ||
+      result.outcome === "non_retryable_failure"
+    ) {
+      state.consecutiveFailures = Number(state.consecutiveFailures || 0) + 1;
+    }
+
+    if (result.outcome === "success" || result.outcome === "stalled_recovered") {
+      state.lastSuccessfulTaskAt = completedAt;
+      runtimeStatus = "bumping";
+    } else if (result.outcome === "cooldown") {
+      runtimeStatus = "waiting_cooldown";
+    } else if (result.outcome === "retryable_failure") {
+      runtimeStatus = "retry_scheduled";
+    } else if (result.outcome === "non_retryable_failure") {
+      runtimeStatus = "error";
+    } else if (result.outcome === "blocked") {
+      runtimeStatus = "blocked";
+    }
+
+    if (!navigationTimedOut) {
+      resetNavigationTimeoutCounter();
+    }
+
+    state.currentStatus = runtimeStatus;
+    updateRuntime({
+      status: runtimeStatus,
+      currentStep: state.currentStep,
+      currentUrl: state.currentUrl || "",
+      cycleActive: false,
+      lastCycleCompletedAt: completedAt,
+      lastProgressAt: completedAt,
+      lastSuccessfulTaskAt: state.lastSuccessfulTaskAt || null,
+      consecutiveFailures: Number(state.consecutiveFailures || 0),
+      cycleOutcome: result.outcome,
+      cycleMessage: result.message,
+      nextScheduledAt: state.nextScheduledAt,
+      dailyRuntimeDayKey: state.dailyRuntimeDayKey,
+      dailyRuntimeUsedMs: state.dailyRuntimeUsedMs,
+      expectedCycleIntervalMs: Number(state.expectedCycleIntervalMs || 0),
+      stallAlertOpen: Boolean(state.stallAlertOpen),
+      waitingForRecovery: Boolean(state.waitingForRecovery),
+      stallRecoveryAttempts: Number(state.stallRecoveryAttempts || 0),
+      consecutiveNavigationTimeouts: Number(
+        state.consecutiveNavigationTimeouts || 0
+      ),
+      lastNavigationTimeoutAt: state.lastNavigationTimeoutAt
+    });
+
+    state.previousCycleFailed =
+      result.outcome === "retryable_failure" ||
+      result.outcome === "non_retryable_failure" ||
+      result.outcome === "blocked";
+
+    console.log(
+      `[CYCLE] finish account=${account.email} cycle=${state.cycleCount} outcome=${result.outcome} status=${runtimeStatus} next=${nextScheduledAtIso || "n/a"} runtime_ms=${cycleRuntimeMs} daily_runtime_ms=${state.dailyRuntimeUsedMs} message=${result.message}`
+    );
+
+    if (result.outcome === "success") {
+      await logActivity({
+        level: "success",
+        message: `\uD83D\uDFE2 ${account.email}\nBump successful\nNext in ${formatDurationCompact(
+          retryDelayMs
+        )}\nProxy: ${proxyLabel}`,
+        ip,
+        email: account.email,
+        accountId: account._id,
+        metadata: {
+          telegram: false,
+          proxy: proxyLabel,
+          nextDelayMs: retryDelayMs,
+          nextScheduledAt: nextScheduledAtIso
+        }
+      }).catch(() => null);
+      await sendTelegramEvent("task_success", {
+        userId: account.userId,
+        accountId: account._id,
+        email: account.email,
+        nextDelayMs: retryDelayMs,
+        currentStep: state.currentStep,
+        metadata: {
+          proxy: proxyLabel
+        }
+      }).catch(() => null);
+      await emitWorkerEvent("worker:cycle-success", result.message, {
+        nextDelayMs: retryDelayMs
+      });
+    } else if (result.outcome === "cooldown") {
+      await logActivity({
+        level: "warning",
+        message: `\u23F3 ${account.email}\nCooldown detected\nNext in ${formatDurationCompact(
+          retryDelayMs
+        )}\nProxy: ${proxyLabel}`,
+        ip,
+        email: account.email,
+        accountId: account._id,
+        metadata: {
+          telegram: false,
+          proxy: proxyLabel,
+          nextDelayMs: retryDelayMs,
+          nextScheduledAt: nextScheduledAtIso,
+          ...result.metadata
+        }
+      }).catch(() => null);
+      await sendTelegramEvent("cooldown_detected", {
+        userId: account.userId,
+        accountId: account._id,
+        email: account.email,
+        nextDelayMs: retryDelayMs,
+        currentStep: state.currentStep,
+        metadata: {
+          proxy: proxyLabel,
+          ...result.metadata
+        }
+      }).catch(() => null);
+    } else if (result.outcome === "retryable_failure") {
+      const shouldNotifyRetry =
+        retryDelayMs >= TELEGRAM_RETRY_NOTIFY_THRESHOLD_MS || previousFailedCycle || retryDelayMs <= 0;
+      await logActivity({
+        level: "warning",
+        message: `\u26A0\uFE0F ${account.email}\nBump retry scheduled\nNext in ${formatDurationCompact(
+          retryDelayMs
+        )}\nReason: ${result.message}\nProxy: ${proxyLabel}`,
+        ip,
+        email: account.email,
+        accountId: account._id,
+        metadata: {
+          telegram: false,
+          proxy: proxyLabel,
+          nextDelayMs: retryDelayMs,
+          nextScheduledAt: nextScheduledAtIso,
+          ...result.metadata
+        }
+      }).catch(() => null);
+      if (shouldNotifyRetry) {
+        await sendTelegramEvent("retry_scheduled", {
+          userId: account.userId,
+          accountId: account._id,
+          email: account.email,
+          nextDelayMs: retryDelayMs,
+          currentStep: state.currentStep,
+          message: result.message,
+          metadata: {
+            proxy: proxyLabel,
+            ...result.metadata
+          }
+        }).catch(() => null);
+      }
+      await emitWorkerEvent("worker:retry-scheduled", result.message, {
+        nextDelayMs: retryDelayMs
+      });
+    } else if (result.outcome === "blocked") {
+      await logActivity({
+        level: "error",
+        message: `\u274C ${account.email}\nAccount blocked\nReason: ${result.message}\nProxy: ${proxyLabel}`,
+        ip,
+        email: account.email,
+        accountId: account._id,
+        metadata: {
+          telegram: false,
+          proxy: proxyLabel,
+          ...result.metadata
+        }
+      }).catch(() => null);
+      await sendTelegramEvent("account_blocked", {
+        userId: account.userId,
+        accountId: account._id,
+        email: account.email,
+        currentStep: state.currentStep,
+        message: result.message,
+        metadata: {
+          proxy: proxyLabel,
+          ...result.metadata
+        }
+      }).catch(() => null);
+    }
+
+    if (RECOVERY_CYCLE_OUTCOMES.has(result.outcome)) {
+      await maybeSendRecoveryNotice(result);
+    }
+
+    await emitWorkerEvent("worker:status", result.message, {
+      outcome: result.outcome
+    });
+
+    return result;
   };
 
   const handleCooldownWait = async (cooldownInfo, stageLabel) => {
@@ -2743,32 +3920,51 @@ async function startBumpLoop(page, account, state = { stopped: false }, options 
       console.log(`[BUMP] Cooldown source: ${cooldownInfo.sourceText}`);
     }
 
-    const schedule = await scheduleNextBump(effectiveWaitMs, {
-      lastRunAt: account.lastBumpAt || new Date()
+    const schedule = await scheduleNextBump({
+      lastRunAt: account.lastBumpAt || new Date(),
+      overrideDelayMs: effectiveWaitMs,
+      additionalRuntimeMs: getCurrentCycleRuntimeMs()
     });
-    await logActivity({
-      level: "warning",
-      message: `\u23F3 ${account.email}\nCooldown detected\nNext in ${formatDurationCompact(
-        effectiveWaitMs
-      )}\nProxy: ${proxyLabel}`,
-      ip,
-      email: account.email,
-      accountId: account._id,
-      metadata: {
-        stage: stageLabel,
-        parsedCooldownMs: hasParsedCooldown ? parsedCooldownMs : null,
-        effectiveWaitMs,
-        nextBumpAt: schedule?.nextBumpAt || null,
-        proxy: proxyLabel
-      }
+    const scheduledDelayMs = Number(schedule?.delayMs || effectiveWaitMs);
+    const scheduledWaitingUntil =
+      schedule?.nextBumpAt && !Number.isNaN(new Date(schedule.nextBumpAt).valueOf())
+        ? new Date(schedule.nextBumpAt)
+        : waitingUntil;
+    await Account.findByIdAndUpdate(account._id, {
+      waitingUntil: scheduledWaitingUntil,
+      cooldownMinutes: Math.max(1, Math.ceil(scheduledDelayMs / 60000))
     }).catch(() => null);
-    await waitForScheduledDelay(effectiveWaitMs + 2000);
-    if (state.stopped) {
-      return;
+    await finalizeCycle(
+      createCycleResult({
+        ok: true,
+        outcome: "cooldown",
+        message: "Cooldown detected",
+        nextDelayMs: scheduledDelayMs,
+        metadata: {
+          stage: stageLabel,
+          parsedCooldownMs: hasParsedCooldown ? parsedCooldownMs : null,
+          effectiveWaitMs,
+          nextBumpAt: schedule?.nextBumpAt || null,
+          proxy: proxyLabel
+        }
+      })
+    );
+    if (
+      await maybePauseForDeferredSchedule(
+        schedule,
+        `Scheduled pause after cooldown: ${account.email} | next ${schedule?.schedule?.adjustedNextRunAtIso || schedule?.nextBumpAt || "n/a"}`
+      )
+    ) {
+      return false;
+    }
+    const keepRunning = await waitForScheduledDelay(scheduledDelayMs + 2000);
+    if (!keepRunning || state.stopped) {
+      return false;
     }
 
     await setBumpingStatus();
     console.log("[BUMP] Cooldown expired, retrying bump...");
+    return true;
   };
 
   await refreshBumpConfig();
@@ -2787,9 +3983,18 @@ async function startBumpLoop(page, account, state = { stopped: false }, options 
   try {
     while (!state.stopped) {
       await refreshBumpConfig();
-      clearScheduledNextBump();
       setWorkerStep(state, "bump_cycle", page);
-      console.log(`[BUMP] Bump cycle begin for ${account.email}`);
+      if (!beginCycle()) {
+        await finalizeCycle(
+          createCycleResult({
+            ok: true,
+            outcome: "skipped",
+            message: "Cycle already active"
+          })
+        );
+        await sleep(1000);
+        continue;
+      }
 
       if (selfTest.enabled) {
         if (selfTest.maxCycles > 0 && selfTestCycleCount >= selfTest.maxCycles) {
@@ -2827,25 +4032,43 @@ async function startBumpLoop(page, account, state = { stopped: false }, options 
           }).catch(() => null);
 
           console.log(`[BUMP] Cooldown detected: waiting ${effectiveWaitMs} ms`);
-          const schedule = await scheduleNextBump(effectiveWaitMs, {
-            lastRunAt: account.lastBumpAt || new Date()
+          const schedule = await scheduleNextBump({
+            lastRunAt: account.lastBumpAt || new Date(),
+            overrideDelayMs: effectiveWaitMs,
+            additionalRuntimeMs: getCurrentCycleRuntimeMs()
           });
-          await logActivity({
-            level: "warning",
-            message: `\u23F3 ${account.email}\nCooldown detected\nNext in ${formatDurationCompact(
-              effectiveWaitMs
-            )}\nProxy: ${proxyLabel}`,
-            ip,
-            email: account.email,
-            accountId: account._id,
-            metadata: {
-              stage: "self_test",
-              effectiveWaitMs,
-              nextBumpAt: schedule?.nextBumpAt || null,
-              proxy: proxyLabel
-            }
+          const scheduledDelayMs = Number(schedule?.delayMs || effectiveWaitMs);
+          const scheduledWaitingUntil =
+            schedule?.nextBumpAt && !Number.isNaN(new Date(schedule.nextBumpAt).valueOf())
+              ? new Date(schedule.nextBumpAt)
+              : waitingUntil;
+          await Account.findByIdAndUpdate(account._id, {
+            waitingUntil: scheduledWaitingUntil,
+            cooldownMinutes: Math.max(1, Math.ceil(scheduledDelayMs / 60000))
           }).catch(() => null);
-          const keepRunning = await waitForScheduledDelay(effectiveWaitMs + 2000);
+          await finalizeCycle(
+            createCycleResult({
+              ok: true,
+              outcome: "cooldown",
+              message: "Cooldown detected",
+              nextDelayMs: scheduledDelayMs,
+          metadata: {
+            stage: "self_test",
+            effectiveWaitMs,
+            nextBumpAt: schedule?.nextBumpAt || null,
+            proxy: proxyLabel
+          }
+        })
+      );
+          if (
+            await maybePauseForDeferredSchedule(
+              schedule,
+              `Scheduled pause after self-test cooldown: ${account.email} | next ${schedule?.schedule?.adjustedNextRunAtIso || schedule?.nextBumpAt || "n/a"}`
+            )
+          ) {
+            break;
+          }
+          const keepRunning = await waitForScheduledDelay(scheduledDelayMs + 2000);
           if (!keepRunning || state.stopped) break;
           await setBumpingStatus();
           continue;
@@ -2856,10 +4079,33 @@ async function startBumpLoop(page, account, state = { stopped: false }, options 
           console.error(
             `[BUMP][SELF-TEST] Simulated bump error. Retrying in ${retryDelayMs} ms`
           );
-          await scheduleNextBump(retryDelayMs, {
-            lastRunAt: account.lastBumpAt || new Date()
+          const schedule = await scheduleNextBump({
+            lastRunAt: account.lastBumpAt || new Date(),
+            overrideDelayMs: retryDelayMs,
+            additionalRuntimeMs: getCurrentCycleRuntimeMs()
           });
-          const keepRunning = await waitForScheduledDelay(retryDelayMs);
+          const scheduledDelayMs = Number(schedule?.delayMs || retryDelayMs);
+          await finalizeCycle(
+            createCycleResult({
+              ok: false,
+              outcome: "retryable_failure",
+              message: "Self-test simulated bump error",
+              nextDelayMs: scheduledDelayMs,
+              metadata: {
+                stage: "self_test",
+                proxy: proxyLabel
+              }
+            })
+          );
+          if (
+            await maybePauseForDeferredSchedule(
+              schedule,
+              `Scheduled pause after self-test retry: ${account.email} | next ${schedule?.schedule?.adjustedNextRunAtIso || schedule?.nextBumpAt || "n/a"}`
+            )
+          ) {
+            break;
+          }
+          const keepRunning = await waitForScheduledDelay(scheduledDelayMs);
           if (!keepRunning || state.stopped) break;
           continue;
         }
@@ -2876,38 +4122,83 @@ async function startBumpLoop(page, account, state = { stopped: false }, options 
         }).catch(() => null);
 
         console.log("[BUMP] Bump success");
-        const delayMs = selfTest.successDelayMs;
-        await scheduleNextBump(delayMs, { lastRunAt: bumpedAt });
-        await logActivity({
-          level: "success",
-          message: `\uD83D\uDFE2 ${account.email}\nBump successful\nNext in ${formatDurationCompact(
-            delayMs
-          )}\nProxy: ${proxyLabel}`,
-          ip,
-          email: account.email,
-          accountId: account._id,
-          metadata: {
-            proxy: proxyLabel,
-            bumpedAt,
-            nextDelayMs: delayMs
-          }
-        }).catch(() => null);
-        const keepRunning = await waitForScheduledDelay(delayMs);
+        const schedule = await scheduleNextBump({
+          lastRunAt: bumpedAt,
+          overrideDelayMs: selfTest.successDelayMs,
+          additionalRuntimeMs: getCurrentCycleRuntimeMs()
+        });
+        const scheduledDelayMs = Number(schedule?.delayMs || selfTest.successDelayMs);
+        await finalizeCycle(
+          createCycleResult({
+            ok: true,
+            outcome: "success",
+            message: "Task completed successfully",
+            nextDelayMs: scheduledDelayMs,
+            metadata: {
+              proxy: proxyLabel,
+              bumpedAt
+            }
+          })
+        );
+        if (
+          await maybePauseForDeferredSchedule(
+            schedule,
+            `Scheduled pause after success: ${account.email} | next ${schedule?.schedule?.adjustedNextRunAtIso || schedule?.nextBumpAt || "n/a"}`
+          )
+        ) {
+          break;
+        }
+        const keepRunning = await waitForScheduledDelay(scheduledDelayMs);
         if (!keepRunning || state.stopped) break;
         continue;
       }
 
-      if (!isWithinRuntimeWindow(account.runtimeWindow, account.timezone)) {
-        console.log(`[BUMP] ${account.email} is outside runtime window; stopping.`);
-        loopExitReason = "runtime_window_closed";
-        break;
+      const runtimeAvailability = evaluateRuntimeAvailability({
+        account,
+        appSettings: currentAppTimingSettings,
+        now: new Date(),
+        workerState: account.workerState || {}
+      });
+      console.log(`[TIMER] Runtime window check for account ${account.email}`);
+      console.log(`[TIMER] Current Bangladesh time: ${runtimeAvailability.nowBdtIso}`);
+      console.log(`[TIMER] Inside runtime window: ${runtimeAvailability.insideRuntimeWindow}`);
+      if (!runtimeAvailability.allowedNow) {
+        console.log(`[TIMER] Next allowed start: ${runtimeAvailability.nextAllowedStartIso}`);
+        const schedule = await scheduleNextBump({
+          lastRunAt: new Date(),
+          overrideDelayMs: 1000,
+          additionalRuntimeMs: getCurrentCycleRuntimeMs()
+        });
+        const scheduledDelayMs = Number(schedule?.delayMs || 1000);
+        await finalizeCycle(
+          createCycleResult({
+            ok: true,
+            outcome: "skipped",
+            message: "Outside runtime window",
+            nextDelayMs: scheduledDelayMs,
+            metadata: {
+              stage: "runtime_window_closed",
+              nextBumpAt: schedule?.nextBumpAt || null,
+              proxy: proxyLabel
+            }
+          })
+        );
+        if (
+          await maybePauseForDeferredSchedule(
+            schedule,
+            `Scheduled pause outside runtime window: ${account.email} | next ${schedule?.schedule?.adjustedNextRunAtIso || schedule?.nextBumpAt || "n/a"}`
+          )
+        ) {
+          break;
+        }
+        continue;
       }
 
       try {
         if (!isPostsListUrl(page.url())) {
-          await page.goto(POSTS_LIST_URL, {
-            waitUntil: "networkidle2",
-            timeout: 90000
+          setWorkerStep(state, "opening_posts_list", page);
+          await openPostsListWithReadiness(page, {
+            reason: "cycle_open_posts_list"
           });
         }
         console.log("[BUMP] On posts list page");
@@ -2925,7 +4216,10 @@ async function startBumpLoop(page, account, state = { stopped: false }, options 
         console.log("[BUMP] Checking button state...");
         const preClickCooldown = await detectBumpCooldown(page);
         if (preClickCooldown.hasCooldown) {
-          await handleCooldownWait(preClickCooldown, "before click");
+          const keepRunning = await handleCooldownWait(preClickCooldown, "before click");
+          if (!keepRunning || state.stopped) {
+            break;
+          }
           continue;
         }
         if (preClickCooldown.buttonVisible) {
@@ -2945,15 +4239,44 @@ async function startBumpLoop(page, account, state = { stopped: false }, options 
           const hint = preClickCooldown?.noButtonHint
             ? ` Hint: ${preClickCooldown.noButtonHint}`
             : "";
+          const retryReason = toShortReason(
+            preClickCooldown?.noButtonHint || "Bump button not found",
+            "Bump button not found"
+          );
           console.log(
             `[BUMP] Bump button not found. Using configured retry window: ${formatDuration(
               retryDelayMs
             )} (${retryDelayMs} ms).${hint}`
           );
-          await scheduleNextBump(retryDelayMs, {
-            lastRunAt: account.lastBumpAt || new Date()
+          const schedule = await scheduleNextBump({
+            lastRunAt: account.lastBumpAt || new Date(),
+            overrideDelayMs: retryDelayMs,
+            additionalRuntimeMs: getCurrentCycleRuntimeMs()
           });
-          await waitForScheduledDelay(retryDelayMs);
+          const scheduledDelayMs = Number(schedule?.delayMs || retryDelayMs);
+          await finalizeCycle(
+            createCycleResult({
+              ok: false,
+              outcome: "retryable_failure",
+              message: retryReason,
+              nextDelayMs: scheduledDelayMs,
+              metadata: {
+                stage: "bump_button_not_found",
+                reason: retryReason,
+                proxy: proxyLabel
+              }
+            })
+          );
+          if (
+            await maybePauseForDeferredSchedule(
+              schedule,
+              `Scheduled pause after retry scheduling: ${account.email} | next ${schedule?.schedule?.adjustedNextRunAtIso || schedule?.nextBumpAt || "n/a"}`
+            )
+          ) {
+            break;
+          }
+          const keepRunning = await waitForScheduledDelay(scheduledDelayMs);
+          if (!keepRunning || state.stopped) break;
           continue;
         }
 
@@ -2961,10 +4284,15 @@ async function startBumpLoop(page, account, state = { stopped: false }, options 
         await Promise.all([
           page
             .waitForNavigation({
-              waitUntil: "networkidle2",
-              timeout: 45000
+              waitUntil: "domcontentloaded",
+              timeout: POST_CLICK_NAVIGATION_TIMEOUT_MS
             })
-            .catch(() => null),
+            .catch((error) => {
+              if (!isNavigationTimeoutError(error)) {
+                throw error;
+              }
+              return null;
+            }),
           bumpButton.click()
         ]);
         await sleep(2000);
@@ -2991,8 +4319,14 @@ async function startBumpLoop(page, account, state = { stopped: false }, options 
           }
 
           await returnToPostsList(page).catch(() => null);
-          await handleCooldownWait(popupCooldown, "cooldown popup after click");
+          const keepRunning = await handleCooldownWait(
+            popupCooldown,
+            "cooldown popup after click"
+          );
           await returnToPostsList(page).catch(() => null);
+          if (!keepRunning || state.stopped) {
+            break;
+          }
           continue;
         }
 
@@ -3019,7 +4353,10 @@ async function startBumpLoop(page, account, state = { stopped: false }, options 
             })
             .catch(() => null);
 
-          await handleCooldownWait(postClickCooldown, "after click");
+          const keepRunning = await handleCooldownWait(postClickCooldown, "after click");
+          if (!keepRunning || state.stopped) {
+            break;
+          }
           continue;
         }
 
@@ -3044,53 +4381,128 @@ async function startBumpLoop(page, account, state = { stopped: false }, options 
         }).catch(() => null);
 
         console.log("[BUMP] Bump success");
-        const { baseInterval, randomMin, randomMax } = currentBumpConfig;
-        const delayMs = calculateRegularDelayMs(baseInterval, randomMin, randomMax);
-        await scheduleNextBump(delayMs, { lastRunAt: bumpedAt });
-        await logActivity({
-          level: "success",
-          message: `\uD83D\uDFE2 ${account.email}\nBump successful\nNext in ${formatDurationCompact(
-            delayMs
-          )}\nProxy: ${proxyLabel}`,
-          ip,
-          email: account.email,
-          accountId: account._id,
-          metadata: {
-            proxy: proxyLabel,
-            bumpedAt,
-            nextDelayMs: delayMs
-          }
-        }).catch(() => null);
-        await waitForScheduledDelay(delayMs);
+        const schedule = await scheduleNextBump({
+          lastRunAt: bumpedAt,
+          additionalRuntimeMs: getCurrentCycleRuntimeMs()
+        });
+        const scheduledDelayMs = Number(schedule?.delayMs || 0);
+        await finalizeCycle(
+          createCycleResult({
+            ok: true,
+            outcome: "success",
+            message: "Task completed successfully",
+            nextDelayMs: scheduledDelayMs,
+            metadata: {
+              proxy: proxyLabel,
+              bumpedAt
+            }
+          })
+        );
+        if (
+          await maybePauseForDeferredSchedule(
+            schedule,
+            `Scheduled pause after success: ${account.email} | next ${schedule?.schedule?.adjustedNextRunAtIso || schedule?.nextBumpAt || "n/a"}`
+          )
+        ) {
+          break;
+        }
+        const keepRunning = await waitForScheduledDelay(scheduledDelayMs);
+        if (!keepRunning || state.stopped) break;
+        continue;
       } catch (error) {
         if (state.stopped || page.isClosed()) break;
         if (String(error?.type || "").toLowerCase() === "banned") {
+          await finalizeCycle(
+            createCycleResult({
+              ok: false,
+              outcome: "blocked",
+              message: "Account banned detected",
+              metadata: {
+                reason: "banned",
+                proxy: proxyLabel
+              }
+            })
+          ).catch(() => null);
           throw error;
         }
         console.error(`[BUMP] Cycle failed for ${account.email}:`, error.message);
+        const hitNavigationTimeout = isNavigationTimeoutError(error);
+        const shouldRecycleBrowser = hitNavigationTimeout
+          ? registerNavigationTimeout(error, state.currentStep || "bump_cycle")
+          : false;
+        if (!hitNavigationTimeout) {
+          resetNavigationTimeoutCounter();
+        }
         const retryDelayMs = getConfiguredDelayMs();
+        const retryReason = toShortReason(error?.message, "Bump cycle failed");
         console.log(
           `[BUMP] Scheduling retry using configured window: ${formatDuration(
             retryDelayMs
           )} (${retryDelayMs} ms)`
         );
-        await scheduleNextBump(retryDelayMs, {
-          lastRunAt: account.lastBumpAt || new Date()
+        const schedule = await scheduleNextBump({
+          lastRunAt: account.lastBumpAt || new Date(),
+          overrideDelayMs: retryDelayMs,
+          additionalRuntimeMs: getCurrentCycleRuntimeMs()
         });
-        await waitForScheduledDelay(retryDelayMs);
+        const scheduledDelayMs = Number(schedule?.delayMs || retryDelayMs);
+        await finalizeCycle(
+          createCycleResult({
+            ok: false,
+            outcome: "retryable_failure",
+            message: retryReason,
+            nextDelayMs: scheduledDelayMs,
+            metadata: {
+              stage: "bump_cycle_failed",
+              reason: retryReason,
+              navigationTimeout: hitNavigationTimeout,
+              consecutiveNavigationTimeouts: Number(
+                state.consecutiveNavigationTimeouts || 0
+              ),
+              proxy: proxyLabel
+            }
+          })
+        );
+        if (shouldRecycleBrowser) {
+          await scheduleBrowserRecycleAfterTimeout(schedule, retryReason, {
+            stage: "bump_cycle_failed",
+            proxy: proxyLabel
+          });
+          break;
+        }
+        if (
+          await maybePauseForDeferredSchedule(
+            schedule,
+            `Scheduled pause after retry scheduling: ${account.email} | next ${schedule?.schedule?.adjustedNextRunAtIso || schedule?.nextBumpAt || "n/a"}`
+          )
+        ) {
+          break;
+        }
+        const keepRunning = await waitForScheduledDelay(scheduledDelayMs);
+        if (!keepRunning || state.stopped) break;
       }
     }
   } finally {
     stopBumpWatchdog();
     clearScheduledNextBump();
+    clearStateTimeout(state, "scheduledWaitTimer");
   }
 
   if (!state.stopped) {
+    const pausedForSchedule =
+      loopExitReason === "runtime_window_closed" ||
+      loopExitReason === "daily_runtime_cap_reached";
+    const preservedNextSchedule =
+      account.nextBumpAt && !Number.isNaN(new Date(account.nextBumpAt).valueOf())
+        ? new Date(account.nextBumpAt)
+        : null;
     const finalStatus =
-      loopExitReason === "runtime_window_closed" ? "paused" : "completed";
+      pausedForSchedule ? "paused" : "completed";
     const finalStep =
-      loopExitReason === "runtime_window_closed"
-        ? "outside_runtime_window"
+      loopExitReason === "daily_runtime_cap_reached"
+        ? "daily_runtime_cap_reached"
+        : loopExitReason === "runtime_window_closed"
+          ? "outside_runtime_window"
         : "completed";
 
     await updateStatus(account._id, finalStatus, {
@@ -3099,12 +4511,26 @@ async function startBumpLoop(page, account, state = { stopped: false }, options 
     }).catch(() => null);
     state.currentStatus = finalStatus;
     setWorkerStep(state, finalStep, page);
-    await Account.findByIdAndUpdate(account._id, {
+    await Account.findByIdAndUpdate(account._id, pausedForSchedule
+      ? {
+          status: finalStatus,
+          waitingUntil: null,
+          nextBumpAt: preservedNextSchedule,
+          nextScheduledStart: preservedNextSchedule
+        }
+      : {
+          status: finalStatus,
+          nextBumpAt: null,
+          nextScheduledStart: null,
+          nextBumpDelayMs: null,
+          waitingUntil: null
+        }).catch(() => null);
+    updateRuntime({
       status: finalStatus,
-      nextBumpAt: null,
-      nextBumpDelayMs: null,
-      waitingUntil: null
-    }).catch(() => null);
+      currentStep: finalStep,
+      nextScheduledAt: pausedForSchedule && preservedNextSchedule ? preservedNextSchedule.valueOf() : null,
+      cycleActive: false
+    });
   }
 }
 
@@ -3114,22 +4540,98 @@ async function startWorker(account, options = {}) {
   const selfTestMode = Boolean(
     toBoolean(options?.selfTest, false) || getSelfTestConfig(account).enabled
   );
+  const existingRuntime = findAccountRegistryEntry(account, {
+    userId: account.userId
+  })?.entry;
+  const initialAppTiming = resolveAppTimingSettings(account.__appSettings || {});
   const state = {
+    accountId: String(account._id),
+    userId: normalizeUserId(account.userId),
+    email: String(account.email || "").trim(),
     stopped: false,
     loopPromise: null,
     activeAnnounced: false,
     heartbeatTimer: null,
     bumpWatchdogTimer: null,
+    workerWatchdogTimer: null,
+    scheduledWaitTimer: null,
     nextBumpAtMs: null,
+    nextScheduledAt: null,
+    rawNextRunAt: existingRuntime?.rawNextRunAt || null,
+    adjustedNextRunAt: existingRuntime?.adjustedNextRunAt || null,
+    expectedCycleIntervalMs: Number(existingRuntime?.expectedCycleIntervalMs || 0),
     forceCycle: false,
+    pendingScheduleOverride: null,
     currentStep: "initializing",
     currentStatus: "starting",
-    currentUrl: ""
+    currentUrl: "",
+    startedAt: Date.now(),
+    lastProgressAt: Number(existingRuntime?.lastProgressAt || Date.now()),
+    lastCycleStartedAt: toTimestampMs(existingRuntime?.lastCycleStartedAt),
+    lastCycleCompletedAt: toTimestampMs(existingRuntime?.lastCycleCompletedAt),
+    lastSuccessfulTaskAt: toTimestampMs(existingRuntime?.lastSuccessfulTaskAt),
+    cycleActive: false,
+    cycleCount: Number(existingRuntime?.cycleCount || 0),
+    consecutiveFailures: Number(existingRuntime?.consecutiveFailures || 0),
+    stallCount: Number(existingRuntime?.stallCount || 0),
+    schedulingTimezone: String(
+      existingRuntime?.schedulingTimezone || initialAppTiming.timezone || DEFAULT_TIMEZONE
+    ),
+    timezoneLabel: String(
+      existingRuntime?.timezoneLabel || initialAppTiming.timezoneLabel || ""
+    ),
+    uiTimeFormat: String(
+      existingRuntime?.uiTimeFormat || initialAppTiming.uiTimeFormat || ""
+    ),
+    selectedRandomDelayMinutes: Number(existingRuntime?.selectedRandomDelayMinutes || 0),
+    dailyRuntimeDayKey: String(
+      account.workerState?.dailyRuntimeDayKey || existingRuntime?.dailyRuntimeDayKey || ""
+    ),
+    dailyRuntimeUsedMs: Number(
+      account.workerState?.dailyRuntimeUsedMs || existingRuntime?.dailyRuntimeUsedMs || 0
+    ),
+    dailyRuntimeAppliedForCycle: false,
+    lastScheduleDecision: String(existingRuntime?.lastScheduleDecision || ""),
+    lastScheduleReason: String(existingRuntime?.lastScheduleReason || ""),
+    consecutiveNavigationTimeouts: Number(
+      existingRuntime?.consecutiveNavigationTimeouts || 0
+    ),
+    lastNavigationTimeoutAt: toTimestampMs(
+      existingRuntime?.lastNavigationTimeoutAt
+    ),
+    stallAlertOpen: Boolean(existingRuntime?.stallAlertOpen),
+    stallRecoveryAttempts: Number(existingRuntime?.stallRecoveryAttempts || 0),
+    waitingForRecovery: Boolean(existingRuntime?.waitingForRecovery),
+    previousCycleFailed: false,
+    recoveryTriggered: false
   };
   let browser = null;
   let page = null;
   let browserClosed = false;
   let exitNotified = false;
+
+  const runtimeRef = {
+    _id: account._id,
+    userId: account.userId,
+    email: account.email
+  };
+
+  const updateRuntime = (patch = {}) =>
+    updateRuntimeRegistryEntry(runtimeRef, patch, {
+      userId: account.userId
+    });
+
+  const emitWorkerEvent = async (eventName, message, extra = {}) =>
+    emitWorkerRuntimeEvent(runtimeRef, eventName, message, extra, {
+      userId: account.userId
+    });
+
+  const stopWorkerWatchdog = () => {
+    if (state.workerWatchdogTimer) {
+      clearInterval(state.workerWatchdogTimer);
+      state.workerWatchdogTimer = null;
+    }
+  };
 
   const notifyExit = async (error = null) => {
     if (exitNotified) return;
@@ -3148,6 +4650,8 @@ async function startWorker(account, options = {}) {
     if (browserClosed) return;
     browserClosed = true;
     stopWorkerHeartbeat(account, state);
+    stopWorkerWatchdog();
+    clearStateTimeout(state, "scheduledWaitTimer");
     if (state.bumpWatchdogTimer) {
       clearInterval(state.bumpWatchdogTimer);
       state.bumpWatchdogTimer = null;
@@ -3178,6 +4682,257 @@ async function startWorker(account, options = {}) {
     }
   };
 
+  const triggerStallRecovery = async (reason) => {
+    if (state.recoveryTriggered || state.stopped) {
+      return;
+    }
+
+    state.recoveryTriggered = true;
+    state.waitingForRecovery = true;
+    clearStateTimeout(state, "scheduledWaitTimer");
+    await closeBrowser();
+    await notifyExit(
+      createWorkerError("stalled", String(reason || `Worker stalled for ${account.email}`))
+    );
+  };
+
+  const startWorkerWatchdog = () => {
+    stopWorkerWatchdog();
+
+    const tick = async () => {
+      if (state.stopped || state.recoveryTriggered) {
+        return;
+      }
+
+      const status = normalizeRuntimeStatus(state.currentStatus || "idle", "idle");
+      if (!WATCHDOG_MONITORED_STATUSES.has(status)) {
+        return;
+      }
+
+      const runtimeEntry = findAccountRegistryEntry(runtimeRef, {
+        userId: account.userId
+      })?.entry;
+      const thresholdMs = calculateWatchdogThresholdMs({
+        ...runtimeEntry,
+        expectedCycleIntervalMs: state.expectedCycleIntervalMs,
+        nextScheduledAt: state.nextScheduledAt,
+        lastCycleCompletedAt: state.lastCycleCompletedAt,
+        lastCycleStartedAt: state.lastCycleStartedAt,
+        lastProgressAt: state.lastProgressAt,
+        startedAt: state.startedAt
+      });
+      const progressAtMs = getRuntimeProgressTimestamp({
+        ...runtimeEntry,
+        lastProgressAt: state.lastProgressAt,
+        lastCycleCompletedAt: state.lastCycleCompletedAt,
+        lastCycleStartedAt: state.lastCycleStartedAt,
+        startedAt: state.startedAt
+      });
+      const stallAgeMs = Math.max(0, Date.now() - progressAtMs);
+
+      if (stallAgeMs < thresholdMs || state.stallAlertOpen) {
+        return;
+      }
+
+      state.stallAlertOpen = true;
+      state.waitingForRecovery = true;
+      state.stallCount = Number(state.stallCount || 0) + 1;
+      state.stallRecoveryAttempts = Number(state.stallRecoveryAttempts || 0) + 1;
+      state.lastStallAlertAt = Date.now();
+      state.currentStatus = "stalled";
+
+      updateRuntime({
+        status: "stalled",
+        currentStep: state.currentStep,
+        currentUrl: state.currentUrl || "",
+        lastProgressAt: progressAtMs,
+        stallAlertOpen: true,
+        waitingForRecovery: true,
+        stallCount: state.stallCount,
+        stallRecoveryAttempts: state.stallRecoveryAttempts,
+        lastStallAlertAt: state.lastStallAlertAt
+      });
+
+      console.warn(
+        `[WATCHDOG] Worker stalled for ${account.email}. age=${formatDuration(
+          stallAgeMs
+        )} threshold=${formatDuration(thresholdMs)}`
+      );
+
+      await logActivity({
+        level: "warning",
+        message: `Worker stalled | ${account.email} | no cycle completed for ${formatDuration(
+          stallAgeMs
+        )}`,
+        ip,
+        email: account.email,
+        accountId: account._id,
+        metadata: {
+          telegram: false,
+          stallAgeMs,
+          thresholdMs,
+          currentStep: state.currentStep,
+          proxy: resolveProxyLabel(account, ip)
+        }
+      }).catch(() => null);
+
+      await emitWorkerEvent("worker:stalled", "Worker stalled", {
+        stallAgeMs,
+        thresholdMs
+      });
+
+      await sendTelegramEvent("worker_stalled", {
+        userId: account.userId,
+        accountId: account._id,
+        email: account.email,
+        currentStep: state.currentStep,
+        message: `No cycle completed for ${formatDuration(stallAgeMs)}`,
+        metadata: {
+          thresholdMs,
+          proxy: resolveProxyLabel(account, ip)
+        }
+      }).catch(() => null);
+
+      await emitWorkerEvent("worker:status", "Worker stalled", {
+        stallAgeMs,
+        thresholdMs
+      });
+
+      await triggerStallRecovery(
+        state.stallRecoveryAttempts > WORKER_STALL_MAX_RECOVERIES
+          ? `Repeated worker stalls exceeded limit for ${account.email}`
+          : `Worker stalled for ${account.email}`
+      );
+    };
+
+    state.workerWatchdogTimer = setInterval(() => {
+      tick().catch((error) => {
+        console.error("[WATCHDOG] Tick failed:", error.message);
+      });
+    }, WORKER_WATCHDOG_INTERVAL_MS);
+
+    if (typeof state.workerWatchdogTimer?.unref === "function") {
+      state.workerWatchdogTimer.unref();
+    }
+  };
+
+  const stopHandle = async () => {
+    if (state.stopped) return;
+    state.stopped = true;
+    state.currentStatus = "stopped";
+    setWorkerStep(state, "stopping", page);
+    clearPendingVerificationSession(account._id);
+    updateRuntime({
+      status: "stopped",
+      currentStep: state.currentStep,
+      cycleActive: false,
+      nextScheduledAt: null
+    });
+    await closeBrowser();
+    await notifyExit();
+    console.log(`Worker stopped for ${account.email}`);
+  };
+
+  const requestRescheduleHandle = async (payload = {}) => {
+    const schedulePayload = payload?.schedule && typeof payload.schedule === "object"
+      ? payload.schedule
+      : {};
+    const nextBumpAt = schedulePayload.nextBumpAt
+      ? new Date(schedulePayload.nextBumpAt)
+      : null;
+    const nextBumpAtMs =
+      nextBumpAt && !Number.isNaN(nextBumpAt.valueOf()) ? nextBumpAt.valueOf() : null;
+
+    if (!Number.isFinite(nextBumpAtMs) || nextBumpAtMs <= 0) {
+      return {
+        applied: false,
+        reason: "invalid_next_bump_at"
+      };
+    }
+
+    const nextDelayMs = Math.max(1000, Math.floor(Number(schedulePayload.nextBumpDelayMs || 0)));
+    const debug = schedulePayload.debug && typeof schedulePayload.debug === "object"
+      ? schedulePayload.debug
+      : {};
+
+    state.pendingScheduleOverride = {
+      nextBumpAtMs
+    };
+    state.nextBumpAtMs = nextBumpAtMs;
+    state.nextScheduledAt = nextBumpAtMs;
+    state.rawNextRunAt = debug.rawNextRunAt || state.rawNextRunAt || null;
+    state.adjustedNextRunAt = debug.adjustedNextRunAt || nextBumpAt.toISOString();
+    state.selectedRandomDelayMinutes = Number(debug.selectedRandomDelayMinutes || 0);
+    state.dailyRuntimeDayKey = String(debug.dailyRuntimeDayKey || state.dailyRuntimeDayKey || "");
+    state.dailyRuntimeUsedMs = Number(debug.dailyRuntimeUsedMs || state.dailyRuntimeUsedMs || 0);
+    state.lastScheduleDecision = String(debug.finalDecision || state.lastScheduleDecision || "");
+    state.lastScheduleReason = String(debug.reason || state.lastScheduleReason || "");
+    state.schedulingTimezone = String(debug.timezone || state.schedulingTimezone || DEFAULT_TIMEZONE);
+    state.timezoneLabel = String(debug.timezoneLabel || state.timezoneLabel || "");
+    if (Number.isFinite(nextDelayMs) && nextDelayMs > 0) {
+      state.expectedCycleIntervalMs = nextDelayMs;
+    }
+    state.lastProgressAt = Date.now();
+
+    account.nextBumpAt = nextBumpAt;
+    account.nextScheduledStart = nextBumpAt;
+    account.nextBumpDelayMs = nextDelayMs;
+    account.workerState = {
+      ...(account.workerState || {}),
+      dailyRuntimeDayKey: state.dailyRuntimeDayKey,
+      dailyRuntimeUsedMs: state.dailyRuntimeUsedMs
+    };
+
+    updateRuntime({
+      nextScheduledAt: state.nextScheduledAt,
+      rawNextRunAt: state.rawNextRunAt,
+      adjustedNextRunAt: state.adjustedNextRunAt,
+      selectedRandomDelayMinutes: state.selectedRandomDelayMinutes,
+      dailyRuntimeDayKey: state.dailyRuntimeDayKey,
+      dailyRuntimeUsedMs: state.dailyRuntimeUsedMs,
+      schedulingTimezone: state.schedulingTimezone,
+      timezoneLabel: state.timezoneLabel,
+      lastScheduleDecision: state.lastScheduleDecision,
+      lastScheduleReason: state.lastScheduleReason,
+      expectedCycleIntervalMs: Number(state.expectedCycleIntervalMs || 0),
+      lastProgressAt: state.lastProgressAt
+    });
+
+    clearStateTimeout(state, "scheduledWaitTimer");
+
+    console.log(
+      `[SCHEDULER] Reschedule requested for ${account.email}. next=${nextBumpAt.toISOString()} reason=${String(
+        payload?.reason || "timing_settings_updated"
+      )}`
+    );
+
+    return {
+      applied: true,
+      nextBumpAt: nextBumpAt.toISOString(),
+      nextDelayMs
+    };
+  };
+
+  updateRuntime({
+    status: "starting",
+    currentStep: state.currentStep,
+    startedAt: state.startedAt,
+    lastProgressAt: state.lastProgressAt,
+    cycleCount: state.cycleCount,
+    consecutiveFailures: state.consecutiveFailures,
+    stallCount: state.stallCount,
+    schedulingTimezone: state.schedulingTimezone,
+    timezoneLabel: state.timezoneLabel,
+    uiTimeFormat: state.uiTimeFormat,
+    dailyRuntimeDayKey: state.dailyRuntimeDayKey,
+    dailyRuntimeUsedMs: state.dailyRuntimeUsedMs,
+    consecutiveNavigationTimeouts: state.consecutiveNavigationTimeouts,
+    lastNavigationTimeoutAt: state.lastNavigationTimeoutAt,
+    stallAlertOpen: state.stallAlertOpen,
+    stallRecoveryAttempts: state.stallRecoveryAttempts,
+    waitingForRecovery: state.waitingForRecovery
+  });
+
   const beginBumpLoop = async () => {
     if (state.stopped || state.loopPromise) {
       return;
@@ -3187,9 +4942,8 @@ async function startWorker(account, options = {}) {
       setWorkerStep(state, "opening_posts_list", page);
 
       if (!isPostsListUrl(page.url())) {
-        await page.goto(POSTS_LIST_URL, {
-          waitUntil: "networkidle2",
-          timeout: 90000
+        await openPostsListWithReadiness(page, {
+          reason: "begin_bump_loop"
         });
       }
 
@@ -3206,16 +4960,22 @@ async function startWorker(account, options = {}) {
       console.log(`[BUMP][SELF-TEST] Starting simulated bump loop for ${account.email}`);
     }
 
-    await updateStatus(account._id, "active", {
+    await updateStatus(account._id, "running", {
       ip,
       email: account.email
     }).catch(() => null);
-    state.currentStatus = "active";
+    state.currentStatus = "running";
     setWorkerStep(state, "ready_for_bumping", page);
     await Account.findByIdAndUpdate(account._id, {
-      status: "active",
+      status: "running",
       waitingUntil: null
     }).catch(() => null);
+    updateRuntime({
+      status: "running",
+      currentStep: state.currentStep,
+      waitingForRecovery: Boolean(state.waitingForRecovery)
+    });
+    await emitWorkerEvent("worker:status", "Worker running");
 
     if (!state.activeAnnounced) {
       state.activeAnnounced = true;
@@ -3261,7 +5021,14 @@ async function startWorker(account, options = {}) {
         if (!state.stopped) {
           state.stopped = true;
         }
-        setWorkerStep(state, "stopping", page);
+        if (
+          !(
+            state.currentStatus === "retry_scheduled" &&
+            state.currentStep === "browser_recycle_pending"
+          )
+        ) {
+          setWorkerStep(state, "stopping", page);
+        }
         await closeBrowser();
         await notifyExit();
       });
@@ -3284,6 +5051,7 @@ async function startWorker(account, options = {}) {
       page = launched.page;
       setWorkerStep(state, "browser_launched", page);
       startWorkerHeartbeat(account, state, page);
+      startWorkerWatchdog();
     } catch (launchError) {
       const launchType = inferWorkerErrorType(launchError?.message);
       throw createWorkerError(
@@ -3330,16 +5098,8 @@ async function startWorker(account, options = {}) {
       await beginBumpLoop();
 
       return {
-        stop: async () => {
-          if (state.stopped) return;
-          state.stopped = true;
-          state.currentStatus = "stopped";
-          setWorkerStep(state, "stopping", page);
-          clearPendingVerificationSession(account._id);
-          await closeBrowser();
-          await notifyExit();
-          console.log(`Worker stopped for ${account.email}`);
-        }
+        stop: stopHandle,
+        requestReschedule: requestRescheduleHandle
       };
     }
 
@@ -3366,6 +5126,10 @@ async function startWorker(account, options = {}) {
         awaitingVerification = true;
         state.currentStatus = "awaiting_verification_code";
         setWorkerStep(state, "awaiting_verification_code", page);
+        updateRuntime({
+          status: "starting",
+          currentStep: state.currentStep
+        });
       } else if (loginResult === true) {
         if (isPostsListUrl(page.url())) {
           await assertAccountNotBanned(page, account, state, { ip });
@@ -3397,16 +5161,8 @@ async function startWorker(account, options = {}) {
         `[VERIFICATION] Waiting for dashboard verification code for ${account.email}`
       );
       return {
-        stop: async () => {
-          if (state.stopped) return;
-          state.stopped = true;
-          state.currentStatus = "stopped";
-          setWorkerStep(state, "stopping", page);
-          clearPendingVerificationSession(account._id);
-          await closeBrowser();
-          await notifyExit();
-          console.log(`Worker stopped for ${account.email}`);
-        }
+        stop: stopHandle,
+        requestReschedule: requestRescheduleHandle
       };
     }
 
@@ -3424,16 +5180,8 @@ async function startWorker(account, options = {}) {
     await beginBumpLoop();
 
     return {
-      stop: async () => {
-        if (state.stopped) return;
-        state.stopped = true;
-        state.currentStatus = "stopped";
-        setWorkerStep(state, "stopping", page);
-        clearPendingVerificationSession(account._id);
-        await closeBrowser();
-        await notifyExit();
-        console.log(`Worker stopped for ${account.email}`);
-      }
+      stop: stopHandle,
+      requestReschedule: requestRescheduleHandle
     };
   } catch (error) {
     const normalizedError = normalizeWorkerError(error);
@@ -3462,6 +5210,11 @@ async function startWorker(account, options = {}) {
       normalizedError.type === "banned" ? "banned_detected" : "worker_error",
       page
     );
+    updateRuntime({
+      status: state.currentStatus,
+      currentStep: state.currentStep,
+      cycleActive: false
+    });
     await closeBrowser();
     await notifyExit(error);
     throw createWorkerError(
@@ -3514,6 +5267,23 @@ async function handleWorkerFailure(account, error, options = {}) {
     .lean();
   if (!latest) return;
   const email = latest?.email || account.email;
+  const runtimeRef = {
+    _id: accountId,
+    userId: scopedUserId || latest.userId,
+    email
+  };
+  const proxyLabel = resolveProxyLabel(latest, ip);
+  const runtimeEntry = findAccountRegistryEntry(runtimeRef, {
+    userId: scopedUserId || latest.userId
+  })?.entry;
+  const updateRuntime = (patch = {}) =>
+    updateRuntimeRegistryEntry(runtimeRef, patch, {
+      userId: scopedUserId || latest.userId
+    });
+  const emitWorkerEvent = async (eventName, message, extra = {}) =>
+    emitWorkerRuntimeEvent(runtimeRef, eventName, message, extra, {
+      userId: scopedUserId || latest.userId
+    });
   const autoRestartEnabled =
     latest?.autoRestartCrashed === undefined
       ? account.autoRestartCrashed !== false
@@ -3536,6 +5306,13 @@ async function handleWorkerFailure(account, error, options = {}) {
       }
     );
     await updateStatus(accountId, "banned", { ip, email }).catch(() => null);
+    updateRuntime({
+      status: "blocked",
+      currentStep: "banned_detected",
+      cycleActive: false,
+      stallAlertOpen: false,
+      waitingForRecovery: false
+    });
     await processQueue();
     return;
   }
@@ -3554,6 +5331,138 @@ async function handleWorkerFailure(account, error, options = {}) {
       }
     );
     await updateStatus(accountId, "awaiting_2fa", { ip, email }).catch(() => null);
+    updateRuntime({
+      status: "starting",
+      currentStep: "awaiting_2fa",
+      cycleActive: false
+    });
+    await processQueue();
+    return;
+  }
+
+  if (normalizedError.type === "stalled") {
+    const stallRecoveryAttempts = Number(runtimeEntry?.stallRecoveryAttempts || 0);
+    const nextRetryAt = new Date(Date.now() + WORKER_STALL_RECOVERY_DELAY_MS);
+
+    if (stallRecoveryAttempts > WORKER_STALL_MAX_RECOVERIES) {
+      clearRetryTimer(accountId);
+      await updateWorkerState(
+        accountId,
+        {
+          failureCount: Number(latest?.workerState?.failureCount || 0),
+          lastErrorMessage: normalizedError.message,
+          lastErrorAt: new Date(),
+          nextRetryAt: null,
+          blockedReason: "Repeated stall recovery limit exceeded"
+        },
+        {
+          status: "error"
+        }
+      );
+      await updateStatus(accountId, "error", { ip, email }).catch(() => null);
+      updateRuntime({
+        status: "error",
+        currentStep: "manual_intervention_required",
+        cycleActive: false,
+        stallAlertOpen: false,
+        waitingForRecovery: false,
+        nextScheduledAt: null
+      });
+      await logActivity({
+        level: "error",
+        message: `\uD83D\uDCA5 Worker crashed | ${email} | repeated stall recovery limit reached`,
+        ip,
+        email,
+        accountId,
+        metadata: {
+          telegram: false,
+          errorType: normalizedError.type,
+          error: normalizedError.message,
+          proxy: proxyLabel,
+          stallRecoveryAttempts
+        }
+      }).catch(() => null);
+      await sendTelegramEvent("worker_crashed", {
+        userId: scopedUserId || latest.userId,
+        accountId,
+        email,
+        currentStep: "manual_intervention_required",
+        message: "Repeated stall recovery limit reached",
+        metadata: {
+          proxy: proxyLabel,
+          stallRecoveryAttempts
+        }
+      }).catch(() => null);
+      await emitWorkerEvent("worker:status", "Manual intervention required", {
+        errorType: normalizedError.type
+      });
+      await processQueue();
+      return;
+    }
+
+    clearRetryTimer(accountId);
+    await updateWorkerState(
+      accountId,
+      {
+        failureCount: Number(latest?.workerState?.failureCount || 0),
+        lastErrorMessage: normalizedError.message,
+        lastErrorAt: new Date(),
+        nextRetryAt,
+        blockedReason: null
+      },
+      {
+        status: "retry_scheduled"
+      }
+    );
+    await updateStatus(accountId, "retry_scheduled", { ip, email }).catch(() => null);
+    updateRuntime({
+      status: "retry_scheduled",
+      currentStep: "stall_recovery_scheduled",
+      cycleActive: false,
+      nextRetryAt,
+      nextScheduledAt: nextRetryAt,
+      waitingForRecovery: true
+    });
+    await logActivity({
+      level: "warning",
+      message: `\u26A0\uFE0F ${email}\nRetry scheduled\nReason: worker stalled\nNext in ${formatDurationCompact(
+        WORKER_STALL_RECOVERY_DELAY_MS
+      )}\nProxy: ${proxyLabel}`,
+      ip,
+      email,
+      accountId,
+      metadata: {
+        telegram: false,
+        errorType: normalizedError.type,
+        error: normalizedError.message,
+        proxy: proxyLabel,
+        retryDelayMs: WORKER_STALL_RECOVERY_DELAY_MS
+      }
+    }).catch(() => null);
+    await emitWorkerEvent("worker:retry-scheduled", "Stall recovery scheduled", {
+      nextDelayMs: WORKER_STALL_RECOVERY_DELAY_MS
+    });
+
+    const retryTimer = setTimeout(async () => {
+      retryTimers.delete(accountId);
+      if (isStopRequested(accountId)) return;
+
+      const latestAccount = await Account.findOne(
+        scopedUserId
+          ? {
+              _id: accountId,
+              userId: scopedUserId
+            }
+          : { _id: accountId }
+      );
+      if (!latestAccount || latestAccount.workerState?.blockedReason) {
+        return;
+      }
+
+      await requestStart(latestAccount, { ip, userId: scopedUserId || latest.userId });
+    }, WORKER_STALL_RECOVERY_DELAY_MS);
+
+    retryTimers.set(accountId, retryTimer);
     await processQueue();
     return;
   }
@@ -3577,6 +5486,12 @@ async function handleWorkerFailure(account, error, options = {}) {
       }
     );
     await updateStatus(accountId, "login_failed", { ip, email }).catch(() => null);
+    updateRuntime({
+      status: "blocked",
+      currentStep: "login_failed",
+      cycleActive: false,
+      nextScheduledAt: null
+    });
 
     emitAccountUpdate(
       account,
@@ -3636,6 +5551,12 @@ async function handleWorkerFailure(account, error, options = {}) {
         propagationError?.message || propagationError
       );
     });
+    updateRuntime({
+      status: "blocked",
+      currentStep: "blocked",
+      cycleActive: false,
+      nextScheduledAt: null
+    });
     console.error(
       "[WORKER] Account blocked after 5 failures. Manual restart required."
     );
@@ -3646,11 +5567,27 @@ async function handleWorkerFailure(account, error, options = {}) {
       email,
       accountId,
       metadata: {
+        telegram: false,
         failureCount,
         errorType: normalizedError.type,
-        error: normalizedError.message
+        error: normalizedError.message,
+        proxy: proxyLabel
       }
     }).catch(() => null);
+    await sendTelegramEvent("account_blocked", {
+      userId: scopedUserId || latest.userId,
+      accountId,
+      email,
+      currentStep: "blocked",
+      message: "Too many consecutive worker failures",
+      metadata: {
+        failureCount,
+        proxy: proxyLabel
+      }
+    }).catch(() => null);
+    await emitWorkerEvent("worker:status", "Account blocked", {
+      failureCount
+    });
     await processQueue();
     return;
   }
@@ -3672,11 +5609,24 @@ async function handleWorkerFailure(account, error, options = {}) {
     }
   );
   await updateStatus(accountId, status, { ip, email }).catch(() => null);
+  updateRuntime({
+    status,
+    currentStep: "worker_retry_pending",
+    cycleActive: false,
+    nextRetryAt,
+    nextScheduledAt: nextRetryAt
+  });
 
   if (!autoRestartEnabled) {
     clearRetryTimer(accountId);
     await updateWorkerState(accountId, {
       nextRetryAt: null
+    });
+    updateRuntime({
+      status: "error",
+      currentStep: "auto_restart_disabled",
+      nextRetryAt: null,
+      cycleActive: false
     });
     await logActivity({
       level: "warning",
@@ -3685,9 +5635,22 @@ async function handleWorkerFailure(account, error, options = {}) {
       email,
       accountId,
       metadata: {
+        telegram: false,
         failureCount,
         errorType: normalizedError.type,
-        error: normalizedError.message
+        error: normalizedError.message,
+        proxy: proxyLabel
+      }
+    }).catch(() => null);
+    await sendTelegramEvent("worker_crashed", {
+      userId: scopedUserId || latest.userId,
+      accountId,
+      email,
+      currentStep: "auto_restart_disabled",
+      message: "Worker crashed and auto-restart is disabled",
+      metadata: {
+        errorType: normalizedError.type,
+        proxy: proxyLabel
       }
     }).catch(() => null);
     await processQueue();
@@ -3706,12 +5669,30 @@ async function handleWorkerFailure(account, error, options = {}) {
     email,
     accountId,
     metadata: {
+      telegram: false,
       failureCount,
       retryDelayMs,
       errorType: normalizedError.type,
-      error: normalizedError.message
+      error: normalizedError.message,
+      proxy: proxyLabel
     }
   }).catch(() => null);
+  await sendTelegramEvent("worker_crashed", {
+    userId: scopedUserId || latest.userId,
+    accountId,
+    email,
+    currentStep: "worker_retry_pending",
+    message: `Worker crashed. Retrying in ${retrySeconds} sec`,
+    metadata: {
+      failureCount,
+      retryDelayMs,
+      errorType: normalizedError.type,
+      proxy: proxyLabel
+    }
+  }).catch(() => null);
+  await emitWorkerEvent("worker:retry-scheduled", "Worker retry scheduled", {
+    nextDelayMs: retryDelayMs
+  });
 
   clearRetryTimer(accountId);
   const retryTimer = setTimeout(async () => {
@@ -3789,6 +5770,11 @@ async function startAccountInternal(account, options = {}) {
 
   const ip = options?.ip || "";
   const scopedUserId = normalizeUserId(options?.userId || account?.userId);
+  const runtimeRef = {
+    _id: accountId,
+    userId: scopedUserId || account.userId,
+    email: account.email
+  };
   if (hasRunningWorker(account, { userId: scopedUserId }) || startingLocks.has(accountId)) {
     return;
   }
@@ -3801,17 +5787,62 @@ async function startAccountInternal(account, options = {}) {
   let startConfirmed = false;
 
   try {
-    if (!isWithinRuntimeWindow(account.runtimeWindow, account.timezone)) {
+    const appTimingSettings = await getOrCreateAppSettings(account.userId).catch(() => null);
+    const schedulingTimezone =
+      resolveAppTimingSettings(appTimingSettings || {}).timezone || DEFAULT_TIMEZONE;
+    const runtimeAvailability = evaluateRuntimeAvailability({
+      account,
+      appSettings: appTimingSettings || {},
+      now: new Date(),
+      workerState: account.workerState || {}
+    });
+    console.log(`[TIMER] Runtime window check for account ${account.email}`);
+    console.log(`[TIMER] Current Bangladesh time: ${runtimeAvailability.nowBdtIso}`);
+    console.log(`[TIMER] Inside runtime window: ${runtimeAvailability.insideRuntimeWindow}`);
+    if (!runtimeAvailability.allowedNow) {
+      const deferredSchedule = computeNextRunSchedule({
+        account,
+        appSettings: appTimingSettings || {},
+        now: new Date(),
+        anchorAt: new Date(),
+        workerState: account.workerState || {},
+        overrideDelayMs: 1000
+      });
+      const scheduleDebug = buildScheduleDecisionLogPayload(deferredSchedule);
+      console.log(`[TIMER] Next allowed start: ${deferredSchedule.adjustedNextRunAtIso}`);
+      updateRuntimeRegistryEntry(runtimeRef, {
+        status: "idle",
+        currentStep:
+          deferredSchedule.decision === "blocked_by_daily_runtime_cap"
+            ? "daily_runtime_cap_reached"
+            : "outside_runtime_window",
+        cycleActive: false,
+        nextScheduledAt: deferredSchedule.nextRunAt,
+        schedulingTimezone: deferredSchedule.timezone,
+        timezoneLabel: deferredSchedule.timezoneLabel,
+        uiTimeFormat: deferredSchedule.uiTimeFormat,
+        dailyRuntimeDayKey: deferredSchedule.dailyRuntimeDayKey,
+        dailyRuntimeUsedMs: deferredSchedule.dailyRuntimeUsedMs,
+        rawNextRunAt: deferredSchedule.rawNextRunAtIso,
+        adjustedNextRunAt: deferredSchedule.adjustedNextRunAtIso,
+        lastScheduleDecision: deferredSchedule.decision,
+        lastScheduleReason: deferredSchedule.reason
+      }, {
+        userId: scopedUserId || account.userId
+      });
       await updateWorkerState(
         accountId,
         {
-          nextRetryAt: null
+          nextRetryAt: null,
+          dailyRuntimeDayKey: deferredSchedule.dailyRuntimeDayKey,
+          dailyRuntimeUsedMs: deferredSchedule.dailyRuntimeUsedMs
         },
         {
           status: "paused",
           waitingUntil: null,
-          nextBumpAt: null,
-          nextBumpDelayMs: null,
+          nextBumpAt: deferredSchedule.nextRunAt,
+          nextScheduledStart: deferredSchedule.nextRunAt,
+          nextBumpDelayMs: deferredSchedule.nextDelayMs,
           cooldownMinutes: null,
           lastCooldownDetected: null
         }
@@ -3825,23 +5856,44 @@ async function startAccountInternal(account, options = {}) {
         {
           status: "paused",
           waitingUntil: null,
-          nextBumpAt: null,
-          nextBumpDelayMs: null,
+          nextBumpAt: deferredSchedule.nextRunAt,
+          nextScheduledStart: deferredSchedule.nextRunAt,
+          nextBumpDelayMs: deferredSchedule.nextDelayMs,
           cooldownMinutes: null
         },
-        {},
+        {
+          nextRun: {
+            nextRunAt: deferredSchedule.adjustedNextRunAtIso,
+            intervalMs: deferredSchedule.nextDelayMs,
+            timing: scheduleDebug
+          }
+        },
         scopedUserId
       );
       await logActivity({
         level: "warning",
-        message: `Start skipped outside runtime window: ${account.email} | window ${account.runtimeWindow || "n/a"}`,
+        message:
+          deferredSchedule.decision === "blocked_by_daily_runtime_cap"
+            ? `Start deferred by daily runtime cap: ${account.email} | next ${deferredSchedule.adjustedNextRunAtIso}`
+            : `Start deferred outside runtime window: ${account.email} | window ${account.runtimeWindow || "n/a"} | next ${deferredSchedule.adjustedNextRunAtIso}`,
         ip,
         email: account.email,
-        accountId
+        accountId,
+        metadata: scheduleDebug
       }).catch(() => null);
       return;
     }
 
+    console.log(`[TIMER] Starting account because runtime window opened: ${account.email}`);
+
+    updateRuntimeRegistryEntry(runtimeRef, {
+      status: "starting",
+      currentStep: "starting_worker",
+      cycleActive: false,
+      lastProgressAt: Date.now()
+    }, {
+      userId: scopedUserId || account.userId
+    });
     await updateStatus(accountId, "starting", {
       ip,
       email: account.email
@@ -3873,7 +5925,9 @@ async function startAccountInternal(account, options = {}) {
     }
 
     setRunningWorker(account, worker, {
-      startedAt: Date.now()
+      startedAt: Date.now(),
+      status: "starting",
+      ip
     });
     clearRetryTimer(accountId);
     await clearWorkerRetryState(accountId);
@@ -3961,6 +6015,22 @@ async function requestStart(accountOrId, options = {}) {
   }
 
   clearStopRequest(accountId);
+  updateRuntimeRegistryEntry(
+    {
+      _id: accountId,
+      userId: scopedUserId,
+      email: typeof accountOrId === "object" ? accountOrId.email : ""
+    },
+    {
+      status: "starting",
+      currentStep: "start_requested",
+      cycleActive: false,
+      lastProgressAt: Date.now()
+    },
+    {
+      userId: scopedUserId
+    }
+  );
 
   const account = await Account.findOne(
     scopedUserId
@@ -3983,6 +6053,15 @@ async function requestStart(accountOrId, options = {}) {
   }
 
   const shouldResetRuntimeFields = Boolean(options?.resetRuntimeFields);
+  const startStatePatch = {
+    status: "starting",
+    waitingUntil: null,
+    nextBumpAt: null,
+    nextScheduledStart: null,
+    nextBumpDelayMs: null,
+    cooldownMinutes: null,
+    lastCooldownDetected: null
+  };
   if (shouldResetRuntimeFields) {
     await updateWorkerState(
       accountId,
@@ -3993,14 +6072,15 @@ async function requestStart(accountOrId, options = {}) {
         nextRetryAt: null,
         blockedReason: null
       },
+      startStatePatch
+    );
+  } else {
+    await updateWorkerState(
+      accountId,
       {
-        status: "starting",
-        waitingUntil: null,
-        nextBumpAt: null,
-        nextBumpDelayMs: null,
-        cooldownMinutes: null,
-        lastCooldownDetected: null
-      }
+        nextRetryAt: null
+      },
+      startStatePatch
     );
   }
 
@@ -4008,6 +6088,7 @@ async function requestStart(accountOrId, options = {}) {
     status: "starting",
     waitingUntil: null,
     nextBumpAt: null,
+    nextScheduledStart: null,
     nextBumpDelayMs: null,
     cooldownMinutes: null,
     workerState: {
@@ -4022,6 +6103,21 @@ async function requestStart(accountOrId, options = {}) {
   emitAccountUpdate(account, startPatch);
 
   if (getActiveWorkerCount() >= MAX_CONCURRENCY) {
+    updateRuntimeRegistryEntry(
+      {
+        _id: accountId,
+        userId: accountUserId,
+        email: account.email
+      },
+      {
+        status: "starting",
+        currentStep: "queued_for_worker_slot",
+        cycleActive: false
+      },
+      {
+        userId: accountUserId
+      }
+    );
     queueStart(accountId, {
       ip: options?.ip || "",
       userId: accountUserId
@@ -4050,7 +6146,17 @@ async function recoverOverdueAccounts() {
     const candidates = await Account.find({
       $or: [
         {
-          status: { $in: ["waiting_cooldown", "bumping", "active", "running"] },
+          status: {
+            $in: [
+              "waiting_cooldown",
+              "bumping",
+              "active",
+              "running",
+              "retry_scheduled",
+              "stalled",
+              "paused"
+            ]
+          },
           $or: [
             { nextBumpAt: { $ne: null, $lte: now } },
             { waitingUntil: { $ne: null, $lte: now } }
@@ -4176,6 +6282,24 @@ async function requestStop(accountId, options = {}) {
     }
   );
   await updateStatus(key, "stopped", { ip, email }).catch(() => null);
+  updateRuntimeRegistryEntry(
+    {
+      _id: key,
+      userId: effectiveUserId,
+      email
+    },
+    {
+      status: "stopped",
+      currentStep: "stopped",
+      cycleActive: false,
+      nextScheduledAt: null,
+      waitingForRecovery: false,
+      stallAlertOpen: false
+    },
+    {
+      userId: effectiveUserId
+    }
+  );
   await logActivity({
     level: "warning",
     message: stopReason
@@ -4196,12 +6320,26 @@ async function requestStop(accountId, options = {}) {
       status: "stopped",
       waitingUntil: null,
       nextBumpAt: null,
+      nextScheduledStart: null,
       nextBumpDelayMs: null,
       cooldownMinutes: null
     },
     {},
     effectiveUserId
   );
+  emitWorkerRuntimeEvent(
+    {
+      _id: key,
+      userId: effectiveUserId,
+      email
+    },
+    "worker:status",
+    stopReason ? `Worker stopped: ${stopReason}` : "Worker stopped",
+    {},
+    {
+      userId: effectiveUserId
+    }
+  ).catch(() => null);
 
   upsertAccountRegistryEntry(
     {
@@ -4219,6 +6357,40 @@ async function requestStop(accountId, options = {}) {
   );
 
   await processQueue();
+}
+
+async function requestReschedule(accountOrId, options = {}) {
+  const accountId = normalizeAccountId(accountOrId);
+  if (!accountId) {
+    return {
+      applied: false,
+      reason: "missing_account_id"
+    };
+  }
+
+  const scopedUserId = normalizeUserId(
+    options?.userId ||
+      (typeof accountOrId === "object" && accountOrId ? accountOrId.userId : "")
+  );
+  const runningEntry = getRunningWorkerEntry(accountId, { userId: scopedUserId });
+  const handler =
+    runningEntry?.entry?.worker &&
+    typeof runningEntry.entry.worker.requestReschedule === "function"
+      ? runningEntry.entry.worker.requestReschedule
+      : null;
+
+  if (!handler) {
+    return {
+      applied: false,
+      running: false,
+      reason: "worker_not_running"
+    };
+  }
+
+  return handler({
+    reason: options?.reason || "timing_settings_updated",
+    schedule: options?.schedule || {}
+  });
 }
 
 async function restartAccount(accountOrId, options = {}) {
@@ -4254,11 +6426,29 @@ async function restartAccount(accountOrId, options = {}) {
   }
 
   const email = String(account.email || options?.email || accountId);
+  updateRuntimeRegistryEntry(
+    {
+      _id: accountId,
+      userId: account.userId,
+      email
+    },
+    {
+      status: "starting",
+      currentStep: "restart_requested",
+      cycleActive: false,
+      waitingForRecovery: false,
+      stallAlertOpen: false
+    },
+    {
+      userId: account.userId
+    }
+  );
 
   emitAccountUpdate(account, {
     status: "restarting",
     waitingUntil: null,
     nextBumpAt: null,
+    nextScheduledStart: null,
     nextBumpDelayMs: null,
     cooldownMinutes: null,
     connectionTest: buildPendingConnectionTest(account.connectionTest)
@@ -4277,6 +6467,7 @@ async function restartAccount(accountOrId, options = {}) {
       status: "restarting",
       waitingUntil: null,
       nextBumpAt: null,
+      nextScheduledStart: null,
       nextBumpDelayMs: null,
       cooldownMinutes: null,
       lastCooldownDetected: null
@@ -4300,6 +6491,7 @@ async function restartAccount(accountOrId, options = {}) {
       status: "restarting",
       waitingUntil: null,
       nextBumpAt: null,
+      nextScheduledStart: null,
       nextBumpDelayMs: null,
       cooldownMinutes: null
     }
@@ -4309,6 +6501,7 @@ async function restartAccount(accountOrId, options = {}) {
     status: "restarting",
     waitingUntil: null,
     nextBumpAt: null,
+    nextScheduledStart: null,
     nextBumpDelayMs: null,
     cooldownMinutes: null
   });
@@ -4455,6 +6648,26 @@ async function resetRetry(accountId, options = {}) {
   }
 
   await clearWorkerRetryState(key);
+  updateRuntimeRegistryEntry(
+    {
+      _id: key,
+      userId: account.userId,
+      email: account.email
+    },
+    {
+      status: "stopped",
+      currentStep: "retry_reset",
+      consecutiveFailures: 0,
+      cycleActive: false,
+      nextScheduledAt: null,
+      waitingForRecovery: false,
+      stallAlertOpen: false,
+      stallRecoveryAttempts: 0
+    },
+    {
+      userId: account.userId
+    }
+  );
 
   if (String(account.status || "").toLowerCase() === "blocked") {
     await updateWorkerState(
@@ -5011,11 +7224,13 @@ module.exports = {
   // Worker manager API
   requestStart,
   requestStop,
+  requestReschedule,
   restartAccount,
   startAll,
   stopAll,
   resetRetry,
   getWorkerStatus,
+  getWorkerDebugSnapshot,
   isRunning,
   start: requestStart,
   stop: requestStop,

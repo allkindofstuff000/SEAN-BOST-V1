@@ -1,40 +1,22 @@
 const Account = require("../model/Account");
 const { tenantFilter } = require("../utils/tenant");
+const {
+  QUICK_BUMP_PRESETS,
+  DEFAULT_TIMEZONE,
+  DEFAULT_TIMEZONE_LABEL,
+  DEFAULT_UI_TIME_FORMAT,
+  buildScheduleDecisionLogPayload,
+  getRuntimeWindowClockRange
+} = require("../utils/timing");
+const {
+  getTimingSettingsForUser,
+  buildAccountSchedulePreview,
+  buildManagedSchedulePatch,
+  requestWorkerReschedule,
+  shouldPersistManagedSchedule
+} = require("../utils/accountTiming");
 
-const QUICK_PRESETS = {
-  conservative: {
-    key: "conservative",
-    name: "Conservative",
-    baseInterval: 45,
-    randomMin: 5,
-    randomMax: 10,
-    runtimeWindow: "00:00-23:59"
-  },
-  standard: {
-    key: "standard",
-    name: "Standard",
-    baseInterval: 30,
-    randomMin: 3,
-    randomMax: 7,
-    runtimeWindow: "00:00-23:59"
-  },
-  aggressive: {
-    key: "aggressive",
-    name: "Aggressive",
-    baseInterval: 15,
-    randomMin: 0.5,
-    randomMax: 3,
-    runtimeWindow: "00:00-23:59"
-  },
-  business_hours: {
-    key: "business_hours",
-    name: "Business Hours",
-    baseInterval: 30,
-    randomMin: 3,
-    randomMax: 7,
-    runtimeWindow: "09:00-17:00"
-  }
-};
+const QUICK_PRESETS = QUICK_BUMP_PRESETS;
 
 function normalizePresetName(presetValue) {
   const value = String(presetValue || "")
@@ -84,24 +66,92 @@ exports.applyQuickPreset = async (req, res) => {
     }
 
     const filter = tenantFilter(req, applyTo === "stopped" ? { status: "stopped" } : {});
+    const runtimeRange = getRuntimeWindowClockRange(preset.runtimeWindow);
     const update = {
       baseInterval: preset.baseInterval,
+      baseIntervalMinutes: preset.baseInterval,
       randomMin: preset.randomMin,
+      randomMinMinutes: preset.randomMin,
       randomMax: preset.randomMax,
-      runtimeWindow: preset.runtimeWindow
+      randomMaxMinutes: preset.randomMax,
+      runtimeWindow: preset.runtimeWindow,
+      runtimeStart: runtimeRange.start24h,
+      runtimeEnd: runtimeRange.end24h,
+      timezone: DEFAULT_TIMEZONE
     };
+    const accounts = await Account.find(filter)
+      .select(
+        "_id email userId status lastBumpAt workerState baseInterval randomMin randomMax maxDailyRuntime runtimeWindow nextBumpAt nextBumpDelayMs"
+      );
+    const appTimingSettings = await getTimingSettingsForUser(req.user?._id).catch(() => ({
+      timezone: DEFAULT_TIMEZONE,
+      timezoneLabel: DEFAULT_TIMEZONE_LABEL,
+      uiTimeFormat: DEFAULT_UI_TIME_FORMAT
+    }));
 
-    const result = await Account.updateMany(filter, { $set: update });
+    const now = new Date();
+    const bulkOperations = [];
+    const reschedules = [];
+    const timingByAccountId = {};
+
+    for (const account of accounts) {
+      const nextAccountState = {
+        ...(account.toObject ? account.toObject() : account),
+        ...update
+      };
+      const schedulePreview = buildAccountSchedulePreview(nextAccountState, appTimingSettings, {
+        now,
+        anchorAt: nextAccountState.lastBumpAt || now
+      });
+      const schedulePatch = buildManagedSchedulePatch(nextAccountState, schedulePreview);
+      const setPatch = {
+        ...update,
+        ...schedulePatch
+      };
+
+      bulkOperations.push({
+        updateOne: {
+          filter: { _id: account._id },
+          update: {
+            $set: setPatch
+          }
+        }
+      });
+
+      timingByAccountId[String(account._id)] = buildScheduleDecisionLogPayload(schedulePreview);
+
+      if (shouldPersistManagedSchedule(nextAccountState) && schedulePatch.nextBumpAt) {
+        reschedules.push(
+          requestWorkerReschedule(nextAccountState, schedulePreview, {
+            userId: req.user?._id,
+            reason: `quick_preset_${preset.key}`
+          }).catch(() => null)
+        );
+      }
+    }
+
+    const result =
+      bulkOperations.length > 0
+        ? await Account.bulkWrite(bulkOperations)
+        : {
+            matchedCount: 0,
+            modifiedCount: 0
+          };
+
+    if (reschedules.length > 0) {
+      await Promise.allSettled(reschedules);
+    }
 
     return res.status(200).json({
       success: true,
-      message: `Applied ${preset.name} preset to ${result.modifiedCount} account(s).`,
+      message: `Applied ${preset.name} preset to ${result.modifiedCount || 0} account(s).`,
       data: {
         preset: preset.key,
         applyTo,
-        matchedCount: result.matchedCount,
-        modifiedCount: result.modifiedCount,
-        values: update
+        matchedCount: result.matchedCount || accounts.length,
+        modifiedCount: result.modifiedCount || 0,
+        values: update,
+        timing: timingByAccountId
       }
     });
   } catch (error) {

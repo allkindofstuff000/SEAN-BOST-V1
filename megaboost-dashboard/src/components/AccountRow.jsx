@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import shield from "../assets/shield.png";
 import { isRunningLikeStatus, toStatusClass } from "../utils/accountStatus";
+import { formatDateTimeBDT, formatTimeBDT } from "../utils/timeDisplay";
 import "./AccountRow.css";
 
 const ONE_SECOND_MS = 1000;
@@ -35,17 +36,6 @@ function formatCountdown(remainingMs) {
   }
 
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-}
-
-function formatTime(value) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.valueOf())) return "-";
-  return date.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit"
-  });
 }
 
 function useNowTick(enabled) {
@@ -106,7 +96,7 @@ function AccountRow({
   }, [baseLastBumpAtMs, fallbackDelayMs, hasCountdown, isDue, nextBumpAtMs, nowTs]);
 
   const progressPercent = Math.round(progress * 100);
-  const nextBumpLabel = hasCountdown ? formatTime(account.nextBumpAt) : "-";
+  const nextBumpLabel = hasCountdown ? formatTimeBDT(account.nextBumpAt, {}, { includeSeconds: true }) : "-";
   const countdownLabel = hasCountdown ? (isDue ? "Due" : formatCountdown(remainingMs)) : "-";
 
   const addRipple = useCallback((event) => {
@@ -152,7 +142,7 @@ function AccountRow({
               {account.connectionTest.success ? "Passed" : "Failed"}
             </div>
             <div className="text-xs opacity-70">
-              {new Date(account.connectionTest.testedAt).toLocaleString()}
+              {formatDateTimeBDT(account.connectionTest.testedAt)}
             </div>
           </div>
         ) : connectionPending ? (
@@ -195,7 +185,7 @@ function AccountRow({
       </div>
 
       <div className="accountRowCell" data-label="Created">
-        {new Date(account.createdAt).toLocaleString()}
+        {formatDateTimeBDT(account.createdAt)}
       </div>
 
       <div className="accountRowCell accountRowActions" data-label="Actions">

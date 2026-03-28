@@ -18,25 +18,15 @@ import api, { getSocketBaseUrl } from "../lib/api";
 import { useAccounts } from "../context/AccountsContext";
 import { useAuth } from "../context/AuthContext";
 import { isRunningLikeStatus, toStatusClass } from "../utils/accountStatus";
+import { formatDateBDT, formatDateTimeBDT } from "../utils/timeDisplay";
 import "./Dashboard.css";
 
 function formatDisplayDate(dateValue) {
-  if (!dateValue) return "N/A";
-
-  const date = new Date(dateValue);
-  if (Number.isNaN(date.valueOf())) return "N/A";
-
-  return date.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "long",
-    day: "numeric"
-  });
+  return formatDateBDT(dateValue, {}, { fallback: "N/A" });
 }
 
 function formatDateTime(dateValue) {
-  const date = new Date(dateValue);
-  if (Number.isNaN(date.valueOf())) return "-";
-  return date.toLocaleString();
+  return formatDateTimeBDT(dateValue);
 }
 
 function normalizeStatusClass(status) {

@@ -1,6 +1,13 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAccounts } from "../context/AccountsContext";
+import TimePickerField from "../components/TimePickerField";
+import {
+  buildRuntimeWindowFromClockTimes,
+  DEFAULT_TIMEZONE_LABEL,
+  getRuntimeWindowClockRange
+} from "../utils/timeDisplay";
+import { TIMING_PRESETS_BY_KEY } from "../utils/timingPresets";
 import "./AddAccount.css";
 
 const DEFAULT_UA =
@@ -14,8 +21,6 @@ const USER_AGENTS = {
   "Firefox 121 (Windows)":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
 };
-
-const WINDOW_REGEX = /^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$/;
 
 export default function AddAccount() {
   const navigate = useNavigate();
@@ -35,7 +40,8 @@ export default function AddAccount() {
     userAgent: DEFAULT_UA,
     autoRestartCrashed: true,
     baseInterval: "30",
-    runtimeWindow: "00:00-23:59",
+    runFromTime: "12:00 AM",
+    runToTime: "11:59 PM",
     randomMin: "0",
     randomMax: "5",
     maxDailyRuntime: "8"
@@ -47,32 +53,24 @@ export default function AddAccount() {
   };
 
   const applyQuickSetting = (type) => {
-    const settings = {
-      conservative: {
-        baseInterval: "45",
-        randomMin: "5",
-        randomMax: "10"
-      },
-      standard: {
-        baseInterval: "30",
-        randomMin: "3",
-        randomMax: "7"
-      },
-      aggressive: {
-        baseInterval: "15",
-        randomMin: "1",
-        randomMax: "3"
-      },
-      businessHours: {
-        runtimeWindow: "09:00-17:00"
-      }
-    };
+    const presetKey = type === "businessHours" ? "business_hours" : type;
+    const preset = TIMING_PRESETS_BY_KEY[presetKey];
+    if (!preset) return;
+    const runtimeRange = getRuntimeWindowClockRange(preset.runtimeWindow);
 
-    setForm((prev) => ({ ...prev, ...settings[type] }));
+    setForm((prev) => ({
+      ...prev,
+      baseInterval: String(preset.baseInterval),
+      randomMin: String(preset.randomMin),
+      randomMax: String(preset.randomMax),
+      runFromTime: runtimeRange.start,
+      runToTime: runtimeRange.end
+    }));
     setErrors((prev) => ({
       ...prev,
       baseInterval: "",
-      runtimeWindow: "",
+      runFromTime: "",
+      runToTime: "",
       randomMin: "",
       randomMax: ""
     }));
@@ -93,8 +91,20 @@ export default function AddAccount() {
       nextErrors.baseInterval = "Base Interval must be between 1 and 1440";
     }
 
-    if (!WINDOW_REGEX.test(form.runtimeWindow)) {
-      nextErrors.runtimeWindow = "Runtime Window must match HH:MM-HH:MM";
+    if (!form.runFromTime.trim()) {
+      nextErrors.runFromTime = "Run Account From is required";
+    }
+
+    if (!form.runToTime.trim()) {
+      nextErrors.runToTime = "Run Account To is required";
+    }
+
+    if (
+      !nextErrors.runFromTime &&
+      !nextErrors.runToTime &&
+      !buildRuntimeWindowFromClockTimes(form.runFromTime, form.runToTime)
+    ) {
+      nextErrors.runToTime = "Run account time range is invalid";
     }
 
     if (form.randomMin === "" || Number.isNaN(Number(form.randomMin))) {
@@ -132,6 +142,8 @@ export default function AddAccount() {
     setSubmitting(true);
 
     try {
+      const runtimeWindow = buildRuntimeWindowFromClockTimes(form.runFromTime, form.runToTime);
+      const runtimeRange = getRuntimeWindowClockRange(runtimeWindow);
       await addAccount({
         email: form.email.trim(),
         password: form.password,
@@ -142,10 +154,18 @@ export default function AddAccount() {
         userAgent: form.userAgent.trim(),
         autoRestartCrashed: form.autoRestartCrashed,
         baseInterval: Number(form.baseInterval),
-        runtimeWindow: form.runtimeWindow,
+        baseIntervalMinutes: Number(form.baseInterval),
+        runtimeWindow,
+        runtimeStart: runtimeRange.start24h,
+        runtimeEnd: runtimeRange.end24h,
+        runtimeStartTime: form.runFromTime.trim(),
+        runtimeEndTime: form.runToTime.trim(),
         randomMin: Number(form.randomMin),
+        randomMinMinutes: Number(form.randomMin),
         randomMax: Number(form.randomMax),
-        maxDailyRuntime: Number(form.maxDailyRuntime)
+        randomMaxMinutes: Number(form.randomMax),
+        maxDailyRuntime: Number(form.maxDailyRuntime),
+        maxDailyRuntimeHours: Number(form.maxDailyRuntime)
       });
 
       setSuccessMessage("Account created. Syncing with backend...");
@@ -169,6 +189,7 @@ export default function AddAccount() {
 
       <h1 className="add-account-title">Add New Account</h1>
       <p className="add-account-subtitle">Add a new account to your MegaPersonals automation system</p>
+      <p className="hint">Run times are interpreted in {DEFAULT_TIMEZONE_LABEL}.</p>
 
       <form className="add-account-form" onSubmit={handleSubmit}>
         <section className="add-card">
@@ -291,18 +312,30 @@ export default function AddAccount() {
               />
             </Field>
 
-            <Field label="Runtime Window" error={errors.runtimeWindow} hint="Format: HH:MM-HH:MM">
-              <input
-                value={form.runtimeWindow}
-                onChange={(e) => setField("runtimeWindow", e.target.value)}
-              />
-            </Field>
+            <TimePickerField
+              label="Run Account From"
+              value={form.runFromTime}
+              onChange={(value) => setField("runFromTime", value)}
+              hint="Bangladesh time (UTC+6)"
+              error={errors.runFromTime}
+              wrapperClassName="field-block"
+            />
+
+            <TimePickerField
+              label="Run Account To"
+              value={form.runToTime}
+              onChange={(value) => setField("runToTime", value)}
+              hint="Bangladesh time (UTC+6)"
+              error={errors.runToTime}
+              wrapperClassName="field-block"
+            />
 
             <Field label="Random Range Min (minutes)" error={errors.randomMin}>
               <input
                 type="number"
                 min={0}
                 max={60}
+                step="0.5"
                 value={form.randomMin}
                 onChange={(e) => setField("randomMin", e.target.value)}
               />
@@ -313,6 +346,7 @@ export default function AddAccount() {
                 type="number"
                 min={0}
                 max={60}
+                step="0.5"
                 value={form.randomMax}
                 onChange={(e) => setField("randomMax", e.target.value)}
               />

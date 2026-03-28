@@ -68,6 +68,7 @@ function buildPanelKeyboard() {
         { text: "\u23F8 Pause", callback_data: "pause_one" },
         { text: "\u25B6\uFE0F Resume", callback_data: "resume_one" }
       ],
+      [{ text: "\uD83D\uDD04 Restart", callback_data: "restart_one" }],
       [
         { text: "\u23F8 Pause all", callback_data: "pause_all" },
         { text: "\u25B6\uFE0F Resume all", callback_data: "resume_all" }
@@ -83,7 +84,13 @@ function toPickerStatusLabel(account) {
 }
 
 function buildAccountPickerKeyboard(mode, accounts = []) {
-  const action = normalizeString(mode).toLowerCase() === "resume" ? "resume" : "pause";
+  const normalizedMode = normalizeString(mode).toLowerCase();
+  const action =
+    normalizedMode === "resume"
+      ? "resume"
+      : normalizedMode === "restart"
+        ? "restart"
+        : "pause";
 
   const rows = accounts
     .filter((account) => account && account._id && account.email)

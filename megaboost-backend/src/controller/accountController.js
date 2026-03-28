@@ -1,4 +1,5 @@
 const Account = require("../model/Account");
+const TelegramGroupBinding = require("../model/TelegramGroupBinding");
 const User = require("../model/User");
 const mongoose = require("mongoose");
 const workerManager = require("../engine/workerGateway");
@@ -15,6 +16,21 @@ const {
 const { logActivity, getClientIp } = require("../utils/activityLogger");
 const { emitAccountUpdate } = require("../utils/socketEvents");
 const { tenantFilter } = require("../utils/tenant");
+const {
+  DEFAULT_TIMEZONE,
+  DEFAULT_TIMEZONE_LABEL,
+  DEFAULT_UI_TIME_FORMAT,
+  RUNTIME_WINDOW_PATTERN,
+  buildScheduleDecisionLogPayload
+} = require("../utils/timing");
+const { resolveRuntimeWindowConfig } = require("../utils/runtimeWindow");
+const {
+  getTimingSettingsForUser,
+  buildAccountSchedulePreview,
+  buildManagedSchedulePatch,
+  requestWorkerReschedule,
+  shouldPersistManagedSchedule
+} = require("../utils/accountTiming");
 
 function getAccountLimit() {
   const limit = Number(process.env.LICENSE_LIMIT || process.env.ACCOUNT_LIMIT || 15);
@@ -70,6 +86,7 @@ function normalizeAccountPayload(payload, options = {}) {
   const data = { ...payload };
   const isUpdate = Boolean(options.isUpdate);
   const hasField = (key) => Object.prototype.hasOwnProperty.call(data, key);
+  delete data.controlAlias;
 
   if (data.proxyString && !data.proxyHost) {
     const [host, port, username, password] = String(data.proxyString).split(":");
@@ -86,10 +103,43 @@ function normalizeAccountPayload(payload, options = {}) {
     data.locale = String(data.locale || "en-US").trim() || "en-US";
   }
   if (!isUpdate || hasField("timezone")) {
-    data.timezone = data.timezone ? String(data.timezone).trim() : "";
+    data.timezone = String(data.timezone || DEFAULT_TIMEZONE).trim() || DEFAULT_TIMEZONE;
+  }
+  if (hasField("runtimeStart")) {
+    data.runtimeStart = data.runtimeStart ? String(data.runtimeStart).trim() : "";
+  }
+  if (hasField("runtimeEnd")) {
+    data.runtimeEnd = data.runtimeEnd ? String(data.runtimeEnd).trim() : "";
+  }
+  if (hasField("runtimeStartTime")) {
+    data.runtimeStartTime = data.runtimeStartTime ? String(data.runtimeStartTime).trim() : "";
+  }
+  if (hasField("runtimeEndTime")) {
+    data.runtimeEndTime = data.runtimeEndTime ? String(data.runtimeEndTime).trim() : "";
+  }
+  if (hasField("runFromTime")) {
+    data.runFromTime = data.runFromTime ? String(data.runFromTime).trim() : "";
+  }
+  if (hasField("runToTime")) {
+    data.runToTime = data.runToTime ? String(data.runToTime).trim() : "";
   }
   if (!isUpdate || hasField("runtimeWindow")) {
     data.runtimeWindow = data.runtimeWindow ? String(data.runtimeWindow).trim() : "";
+  }
+
+  const hasRuntimeStartField =
+    hasField("runtimeStart") || hasField("runtimeStartTime") || hasField("runFromTime");
+  const hasRuntimeEndField =
+    hasField("runtimeEnd") || hasField("runtimeEndTime") || hasField("runToTime");
+  if (hasRuntimeStartField || hasRuntimeEndField || (!isUpdate || hasField("runtimeWindow"))) {
+    const runtimeConfig = resolveRuntimeWindowConfig({
+      runtimeStart: data.runtimeStart ?? data.runtimeStartTime ?? data.runFromTime ?? "",
+      runtimeEnd: data.runtimeEnd ?? data.runtimeEndTime ?? data.runToTime ?? "",
+      runtimeWindow: data.runtimeWindow || ""
+    });
+    data.runtimeStart = runtimeConfig.runtimeStart;
+    data.runtimeEnd = runtimeConfig.runtimeEnd;
+    data.runtimeWindow = runtimeConfig.runtimeWindow;
   }
 
   if (hasField("screenWidth") && data.screenWidth !== undefined && data.screenWidth !== null && data.screenWidth !== "") {
@@ -102,17 +152,37 @@ function normalizeAccountPayload(payload, options = {}) {
   if (!isUpdate || hasField("maxDailyBumps")) {
     data.maxDailyBumps = Number(isUpdate ? data.maxDailyBumps : data.maxDailyBumps || 10);
   }
-  if (!isUpdate || hasField("baseInterval")) {
-    data.baseInterval = Number(isUpdate ? data.baseInterval : data.baseInterval || 30);
+  if (!isUpdate || hasField("baseInterval") || hasField("baseIntervalMinutes")) {
+    data.baseIntervalMinutes = Number(
+      isUpdate
+        ? (data.baseIntervalMinutes ?? data.baseInterval)
+        : (data.baseIntervalMinutes ?? data.baseInterval ?? 30)
+    );
+    data.baseInterval = data.baseIntervalMinutes;
   }
-  if (!isUpdate || hasField("randomMin")) {
-    data.randomMin = Number(isUpdate ? data.randomMin : data.randomMin || 0);
+  if (!isUpdate || hasField("randomMin") || hasField("randomMinMinutes")) {
+    data.randomMinMinutes = Number(
+      isUpdate
+        ? (data.randomMinMinutes ?? data.randomMin)
+        : (data.randomMinMinutes ?? data.randomMin ?? 0)
+    );
+    data.randomMin = data.randomMinMinutes;
   }
-  if (!isUpdate || hasField("randomMax")) {
-    data.randomMax = Number(isUpdate ? data.randomMax : data.randomMax || 5);
+  if (!isUpdate || hasField("randomMax") || hasField("randomMaxMinutes")) {
+    data.randomMaxMinutes = Number(
+      isUpdate
+        ? (data.randomMaxMinutes ?? data.randomMax)
+        : (data.randomMaxMinutes ?? data.randomMax ?? 5)
+    );
+    data.randomMax = data.randomMaxMinutes;
   }
-  if (!isUpdate || hasField("maxDailyRuntime")) {
-    data.maxDailyRuntime = Number(isUpdate ? data.maxDailyRuntime : data.maxDailyRuntime || 8);
+  if (!isUpdate || hasField("maxDailyRuntime") || hasField("maxDailyRuntimeHours")) {
+    data.maxDailyRuntimeHours = Number(
+      isUpdate
+        ? data.maxDailyRuntimeHours ?? data.maxDailyRuntime
+        : (data.maxDailyRuntimeHours ?? data.maxDailyRuntime ?? 8)
+    );
+    data.maxDailyRuntime = data.maxDailyRuntimeHours;
   }
 
   if (!isUpdate || hasField("autoRestartCrashed")) {
@@ -130,7 +200,6 @@ function normalizeAccountPayload(payload, options = {}) {
   return data;
 }
 
-const RUNTIME_WINDOW_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)-([01]\d|2[0-3]):([0-5]\d)$/;
 const SUPPORTED_PROXY_TYPES = new Set(["http", "socks5"]);
 
 function validateAccountPayload(data) {
@@ -180,7 +249,11 @@ function validateAccountPayload(data) {
   ) {
     return "Screen height must be between 600 and 2160";
   }
-  if (!RUNTIME_WINDOW_PATTERN.test(String(data.runtimeWindow || ""))) {
+  if (
+    !RUNTIME_WINDOW_PATTERN.test(String(data.runtimeWindow || "")) ||
+    !String(data.runtimeStart || "").trim() ||
+    !String(data.runtimeEnd || "").trim()
+  ) {
     return "Runtime window must be in HH:MM-HH:MM format";
   }
 
@@ -190,7 +263,11 @@ function validateAccountPayload(data) {
 function validateAccountUpdatePayload(patch = {}) {
   const hasField = (key) => Object.prototype.hasOwnProperty.call(patch, key);
 
-  if (hasField("runtimeWindow") && !RUNTIME_WINDOW_PATTERN.test(String(patch.runtimeWindow || ""))) {
+  if (
+    (hasField("runtimeWindow") && !RUNTIME_WINDOW_PATTERN.test(String(patch.runtimeWindow || ""))) ||
+    (hasField("runtimeStart") && !String(patch.runtimeStart || "").trim()) ||
+    (hasField("runtimeEnd") && !String(patch.runtimeEnd || "").trim())
+  ) {
     return "Runtime window must be in HH:MM-HH:MM format";
   }
 
@@ -205,8 +282,8 @@ function validateAccountUpdatePayload(patch = {}) {
     }
   }
 
-  if (hasField("baseInterval")) {
-    const value = Number(patch.baseInterval);
+  if (hasField("baseInterval") || hasField("baseIntervalMinutes")) {
+    const value = Number(patch.baseIntervalMinutes ?? patch.baseInterval);
     if (!Number.isFinite(value) || value < 1 || value > 1440) {
       return "Base interval must be between 1 and 1440 minutes";
     }
@@ -219,29 +296,32 @@ function validateAccountUpdatePayload(patch = {}) {
     }
   }
 
-  if (hasField("maxDailyRuntime")) {
-    const value = Number(patch.maxDailyRuntime);
+  if (hasField("maxDailyRuntime") || hasField("maxDailyRuntimeHours")) {
+    const value = Number(patch.maxDailyRuntimeHours ?? patch.maxDailyRuntime);
     if (!Number.isFinite(value) || value < 1 || value > 24) {
       return "Max daily runtime must be between 1 and 24 hours";
     }
   }
 
-  if (hasField("randomMin")) {
-    const value = Number(patch.randomMin);
+  if (hasField("randomMin") || hasField("randomMinMinutes")) {
+    const value = Number(patch.randomMinMinutes ?? patch.randomMin);
     if (!Number.isFinite(value) || value < 0) {
       return "Random range is invalid";
     }
   }
 
-  if (hasField("randomMax")) {
-    const value = Number(patch.randomMax);
+  if (hasField("randomMax") || hasField("randomMaxMinutes")) {
+    const value = Number(patch.randomMaxMinutes ?? patch.randomMax);
     if (!Number.isFinite(value) || value < 0) {
       return "Random range is invalid";
     }
   }
 
-  if (hasField("randomMin") && hasField("randomMax")) {
-    if (Number(patch.randomMax) < Number(patch.randomMin)) {
+  if (
+    (hasField("randomMin") || hasField("randomMinMinutes")) &&
+    (hasField("randomMax") || hasField("randomMaxMinutes"))
+  ) {
+    if (Number(patch.randomMaxMinutes ?? patch.randomMax) < Number(patch.randomMinMinutes ?? patch.randomMin)) {
       return "Random range is invalid";
     }
   }
@@ -262,6 +342,25 @@ function validateAccountUpdatePayload(patch = {}) {
 
   return null;
 }
+
+const TIMING_UPDATE_FIELDS = new Set([
+  "baseInterval",
+  "baseIntervalMinutes",
+  "randomMin",
+  "randomMinMinutes",
+  "randomMax",
+  "randomMaxMinutes",
+  "runtimeWindow",
+  "runtimeStart",
+  "runtimeEnd",
+  "runtimeStartTime",
+  "runtimeEndTime",
+  "runFromTime",
+  "runToTime",
+  "maxDailyRuntime",
+  "maxDailyRuntimeHours",
+  "timezone"
+]);
 
 function ensureDbConnected(res) {
   if (mongoose.connection.readyState !== 1) {
@@ -661,9 +760,46 @@ exports.updateAccount = async (req, res) => {
       });
     }
 
+    const existing = await Account.findOne(
+      getScopedFilter(req, { _id: req.params.id })
+    );
+
+    if (!existing) {
+      return res.status(404).json({
+        success: false,
+        message: "Account not found"
+      });
+    }
+
+    const timingChanged = Object.keys(payload).some((field) => TIMING_UPDATE_FIELDS.has(field));
+    let schedulePreview = null;
+    let schedulePatch = {};
+
+    if (timingChanged) {
+      const nextAccountState = {
+        ...(existing.toObject ? existing.toObject() : existing),
+        ...payload
+      };
+      const appTimingSettings = await getTimingSettingsForUser(existing.userId).catch(() => ({
+        timezone: DEFAULT_TIMEZONE,
+        timezoneLabel: DEFAULT_TIMEZONE_LABEL,
+        uiTimeFormat: DEFAULT_UI_TIME_FORMAT
+      }));
+      schedulePreview = buildAccountSchedulePreview(nextAccountState, appTimingSettings, {
+        now: new Date(),
+        anchorAt: nextAccountState.lastBumpAt || new Date()
+      });
+      schedulePatch = buildManagedSchedulePatch(nextAccountState, schedulePreview);
+    }
+
     const account = await Account.findOneAndUpdate(
       getScopedFilter(req, { _id: req.params.id }),
-      payload,
+      {
+        $set: {
+          ...payload,
+          ...schedulePatch
+        }
+      },
       { new: true }
     );
 
@@ -674,9 +810,21 @@ exports.updateAccount = async (req, res) => {
       });
     }
 
+    if (schedulePreview && shouldPersistManagedSchedule(account) && schedulePatch.nextBumpAt) {
+      await requestWorkerReschedule(account, schedulePreview, {
+        userId: req.user?._id,
+        reason: "account_timing_updated"
+      }).catch(() => null);
+    }
+
     return res.status(200).json({
       success: true,
-      data: account
+      data: account,
+      meta: schedulePreview
+        ? {
+            timing: buildScheduleDecisionLogPayload(schedulePreview)
+          }
+        : undefined
     });
   } catch (error) {
     return res.status(500).json({
@@ -708,6 +856,10 @@ exports.deleteAccount = async (req, res) => {
     }
 
     await Account.deleteOne(getScopedFilter(req, { _id: req.params.id }));
+    await TelegramGroupBinding.deleteMany({
+      userId: req.user?._id,
+      accountId: account._id
+    }).catch(() => null);
 
     const deleteSuffix = Math.floor(Date.now() / 1000);
 
@@ -1259,6 +1411,48 @@ exports.getWorkersStatus = async (req, res) => {
         userId: req.user?._id
       })
     );
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+exports.getWorkerDebug = async (req, res) => {
+  try {
+    const account = await Account.findOne(
+      getScopedFilter(req, { _id: req.params.accountId || req.params.id })
+    ).lean();
+
+    if (!account) {
+      return res.status(404).json({
+        success: false,
+        message: "Account not found"
+      });
+    }
+
+    const snapshot = await workerManager.getWorkerDebugSnapshot(account._id, {
+      userId: req.user?._id
+    });
+
+    const appTimingSettings = await getTimingSettingsForUser(account.userId).catch(() => ({
+      timezone: DEFAULT_TIMEZONE,
+      timezoneLabel: DEFAULT_TIMEZONE_LABEL,
+      uiTimeFormat: DEFAULT_UI_TIME_FORMAT
+    }));
+    const schedulePreview = buildAccountSchedulePreview(account, appTimingSettings, {
+      now: new Date(),
+      anchorAt: account.lastBumpAt || new Date()
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        runtime: snapshot || null,
+        timing: buildScheduleDecisionLogPayload(schedulePreview)
+      }
+    });
   } catch (error) {
     return res.status(500).json({
       success: false,

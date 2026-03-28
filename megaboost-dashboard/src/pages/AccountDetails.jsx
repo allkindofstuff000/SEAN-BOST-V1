@@ -4,13 +4,11 @@ import { Edit3, LoaderCircle, Play, RotateCcw } from "lucide-react";
 import { useAccounts } from "../context/AccountsContext";
 import { getAccountActivity, getAccountBumps, getAccountById } from "../lib/api";
 import { isRunningLikeStatus, toStatusClass } from "../utils/accountStatus";
+import { formatDateTimeBDT, formatRuntimeWindowBDT } from "../utils/timeDisplay";
 import "./AccountDetails.css";
 
 function formatDateTime(value, fallback = "-") {
-  if (!value) return fallback;
-  const date = new Date(value);
-  if (Number.isNaN(date.valueOf())) return fallback;
-  return date.toLocaleString();
+  return formatDateTimeBDT(value, {}, { fallback });
 }
 
 function toNumber(value, fallback = 0) {
@@ -349,7 +347,7 @@ export default function AccountDetails() {
             <div className="account-details-fields">
               <div><span>Base Interval</span><strong>{toNumber(resolved?.baseInterval, 30)} min</strong></div>
               <div><span>Random Range</span><strong>{randomMin}-{randomMax} min</strong></div>
-              <div><span>Runtime Window</span><strong>{resolved?.runtimeWindow || "00:00-23:59"}</strong></div>
+              <div><span>Run Account</span><strong>{formatRuntimeWindowBDT(resolved?.runtimeWindow || "00:00-23:59")}</strong></div>
               <div><span>Max Daily Runtime</span><strong>{toNumber(resolved?.maxDailyRuntime, 24)} h</strong></div>
             </div>
           </section>

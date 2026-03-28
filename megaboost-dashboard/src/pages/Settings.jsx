@@ -9,8 +9,14 @@ import {
 } from "lucide-react";
 import { useAccounts } from "../context/AccountsContext";
 import { useAuth } from "../context/AuthContext";
-import { getTelegramSettings } from "../lib/api";
+import { getAppSettings, getTelegramSettings } from "../lib/api";
 import TelegramConfigModal from "../components/TelegramConfigModal";
+import {
+  DEFAULT_TIMEZONE,
+  DEFAULT_TIMEZONE_LABEL,
+  DEFAULT_UI_TIME_FORMAT,
+  formatDateTimeBDT
+} from "../utils/timeDisplay";
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -25,6 +31,11 @@ export default function Settings() {
   const [loadingTelegram, setLoadingTelegram] = useState(true);
   const [telegramError, setTelegramError] = useState("");
   const [isTelegramModalOpen, setIsTelegramModalOpen] = useState(false);
+  const [appSettings, setAppSettings] = useState({
+    timezone: DEFAULT_TIMEZONE,
+    timezoneLabel: DEFAULT_TIMEZONE_LABEL,
+    uiTimeFormat: DEFAULT_UI_TIME_FORMAT
+  });
 
   const loadTelegramSettings = useCallback(async () => {
     setLoadingTelegram(true);
@@ -51,6 +62,24 @@ export default function Settings() {
   useEffect(() => {
     loadTelegramSettings();
   }, [loadTelegramSettings]);
+
+  useEffect(() => {
+    getAppSettings()
+      .then((settings) => {
+        setAppSettings({
+          timezone: String(settings?.timezone || DEFAULT_TIMEZONE),
+          timezoneLabel: String(settings?.timezoneLabel || DEFAULT_TIMEZONE_LABEL),
+          uiTimeFormat: String(settings?.uiTimeFormat || DEFAULT_UI_TIME_FORMAT)
+        });
+      })
+      .catch(() => {
+        setAppSettings({
+          timezone: DEFAULT_TIMEZONE,
+          timezoneLabel: DEFAULT_TIMEZONE_LABEL,
+          uiTimeFormat: DEFAULT_UI_TIME_FORMAT
+        });
+      });
+  }, []);
 
   const isConfigured = useMemo(
     () => Boolean(telegramSettings.enabled && telegramSettings.chatId),
@@ -88,6 +117,19 @@ export default function Settings() {
           <button className="w-full rounded-lg bg-accent px-4 py-2 text-sm font-medium transition hover:scale-105 sm:w-auto">
             Manage Account
           </button>
+        </div>
+
+        <div className="rounded-xl border border-red-800 bg-card p-6">
+          <div className="mb-4 flex items-center gap-2">
+            <SettingsIcon size={20} />
+            <h2 className="text-lg font-semibold">Timing System</h2>
+          </div>
+
+          <div className="space-y-1 text-sm opacity-80">
+            <div>Timezone: {appSettings.timezoneLabel}</div>
+            <div>IANA Zone: {appSettings.timezone}</div>
+            <div>UI Time Format: {appSettings.uiTimeFormat === "24h" ? "24-hour" : "12-hour AM/PM"}</div>
+          </div>
         </div>
 
         <div className="rounded-xl border border-red-800 bg-card p-6">
@@ -243,18 +285,7 @@ function formatRoleLabel(roleValue) {
 }
 
 function formatMemberSince(dateValue) {
-  const date = new Date(dateValue || "");
-  if (Number.isNaN(date.valueOf())) {
-    return "Unknown";
-  }
-
-  return date.toLocaleString(undefined, {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit"
-  });
+  return formatDateTimeBDT(dateValue, {}, { fallback: "Unknown", includeSeconds: false });
 }
 
 function InfoRow({ label, value }) {

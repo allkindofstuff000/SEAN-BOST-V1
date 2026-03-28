@@ -125,6 +125,27 @@ async function requestStop(accountOrId, options = {}) {
   });
 }
 
+async function requestReschedule(accountOrId, options = {}) {
+  if (!USE_REMOTE_WORKER) {
+    return localWorkerManager.requestReschedule(accountOrId, options);
+  }
+
+  const accountId = normalizeAccountId(accountOrId);
+  if (!accountId) throw new Error("accountId is required");
+  const userId = normalizeUserId(options?.userId || accountOrId?.userId);
+  return remoteRequest("/request-reschedule", {
+    body: { accountId, userId, options }
+  });
+}
+
+async function pauseAccount(accountOrId, options = {}) {
+  return requestStop(accountOrId, options);
+}
+
+async function resumeAccount(accountOrId, options = {}) {
+  return requestStart(accountOrId, options);
+}
+
 async function restartAccount(accountOrId, options = {}) {
   if (!USE_REMOTE_WORKER) {
     return localWorkerManager.restartAccount(accountOrId, options);
@@ -157,6 +178,24 @@ async function getWorkerStatus(options = {}) {
   const path = userId
     ? `/status?userId=${encodeURIComponent(userId)}`
     : "/status";
+
+  return remoteRequest(path, {
+    method: "GET",
+    timeoutMs: Number(process.env.WORKER_STATUS_TIMEOUT_MS || 5000)
+  });
+}
+
+async function getWorkerDebugSnapshot(accountOrId, options = {}) {
+  if (!USE_REMOTE_WORKER) {
+    return localWorkerManager.getWorkerDebugSnapshot(accountOrId, options);
+  }
+
+  const accountId = normalizeAccountId(accountOrId);
+  if (!accountId) throw new Error("accountId is required");
+  const userId = normalizeUserId(options?.userId || accountOrId?.userId);
+  const path = userId
+    ? `/debug/${encodeURIComponent(accountId)}?userId=${encodeURIComponent(userId)}`
+    : `/debug/${encodeURIComponent(accountId)}`;
 
   return remoteRequest(path, {
     method: "GET",
@@ -237,9 +276,13 @@ function shouldManageWorkerLifecycle() {
 module.exports = {
   requestStart,
   requestStop,
+  requestReschedule,
+  pauseAccount,
+  resumeAccount,
   restartAccount,
   stopAll,
   getWorkerStatus,
+  getWorkerDebugSnapshot,
   isRunning,
   resetRetry,
   submitVerificationCode,
@@ -247,5 +290,7 @@ module.exports = {
   testProxyNavigation,
   start: requestStart,
   stop: requestStop,
+  pause: pauseAccount,
+  resume: resumeAccount,
   shouldManageWorkerLifecycle
 };

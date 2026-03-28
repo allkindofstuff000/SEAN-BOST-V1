@@ -34,7 +34,10 @@ const accountSchema = new mongoose.Schema({
     type: String,
     default: "en-US"
   },
-  timezone: String,
+  timezone: {
+    type: String,
+    default: "Asia/Dhaka"
+  },
   screenWidth: {
     type: Number,
     min: 800,
@@ -64,6 +67,8 @@ const accountSchema = new mongoose.Schema({
       "active",
       "bumping",
       "waiting_cooldown",
+      "retry_scheduled",
+      "stalled",
       "awaiting_captcha",
       "awaiting_verification_code",
       "awaiting_2fa",
@@ -99,6 +104,14 @@ const accountSchema = new mongoose.Schema({
     },
     blockedReason: {
       type: String
+    },
+    dailyRuntimeDayKey: {
+      type: String,
+      default: ""
+    },
+    dailyRuntimeUsedMs: {
+      type: Number,
+      default: 0
     }
   },
 
@@ -119,7 +132,17 @@ const accountSchema = new mongoose.Schema({
     default: 30
   },
 
+  baseIntervalMinutes: {
+    type: Number,
+    default: 30
+  },
+
   randomMin: {
+    type: Number,
+    default: 0
+  },
+
+  randomMinMinutes: {
     type: Number,
     default: 0
   },
@@ -129,11 +152,32 @@ const accountSchema = new mongoose.Schema({
     default: 5
   },
 
+  randomMaxMinutes: {
+    type: Number,
+    default: 5
+  },
+
+  runtimeStart: {
+    type: String,
+    default: "00:00"
+  },
+
+  runtimeEnd: {
+    type: String,
+    default: "23:59"
+  },
+
   runtimeWindow: {
-    type: String
+    type: String,
+    default: "00:00-23:59"
   },
 
   maxDailyRuntime: {
+    type: Number,
+    default: 8
+  },
+
+  maxDailyRuntimeHours: {
     type: Number,
     default: 8
   },
@@ -147,6 +191,7 @@ const accountSchema = new mongoose.Schema({
   lastBumpAt: Date,
   nextBumpAt: Date,
   nextBumpDelayMs: Number,
+  nextScheduledStart: Date,
 
   totalBumpsToday: {
     type: Number,

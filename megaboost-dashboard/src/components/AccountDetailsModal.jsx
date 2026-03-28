@@ -2,13 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, LoaderCircle, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { getAccountActivity, getAccountBumps, getAccountById } from "../lib/api";
+import { formatDateTimeBDT, formatRuntimeWindowBDT } from "../utils/timeDisplay";
 import "./AccountDetailsModal.css";
 
 function formatDateTime(value, fallback = "-") {
-  if (!value) return fallback;
-  const date = new Date(value);
-  if (Number.isNaN(date.valueOf())) return fallback;
-  return date.toLocaleString();
+  return formatDateTimeBDT(value, {}, { fallback });
 }
 
 function toNumber(value, fallback = 0) {
@@ -176,8 +174,8 @@ export default function AccountDetailsModal({ account, onClose }) {
                 <strong>{randomMin}-{randomMax}min</strong>
               </div>
               <div className="adm-runtime-tile">
-                <label>Runtime Window</label>
-                <strong>{resolved?.runtimeWindow || "00:00-23:59"}</strong>
+                <label>Run Account</label>
+                <strong>{formatRuntimeWindowBDT(resolved?.runtimeWindow || "00:00-23:59")}</strong>
               </div>
               <div className="adm-runtime-tile">
                 <label>Max Daily Runtime</label>
