@@ -15,18 +15,18 @@
   font-size: 2rem;
   font-weight: 800;
   line-height: 1.1;
-  color: #ffe8e8;
+  color: var(--text);
 }
 
 .dashboardSubtitle {
-  color: rgba(255, 255, 255, 0.78);
+  color: var(--muted);
 }
 
 .dashboardCard {
-  border: 1px solid rgba(255, 75, 75, 0.35);
+  border: 1px solid var(--border);
   border-radius: 10px;
-  background: linear-gradient(180deg, rgba(55, 6, 6, 0.75), rgba(33, 5, 5, 0.78));
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  background: var(--card);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22);
 }
 
 .licenseCard {
@@ -63,9 +63,9 @@
 .licenseActiveBadge {
   font-size: 0.75rem;
   font-weight: 700;
-  color: #eafff6;
-  background: rgba(0, 255, 157, 0.18);
-  border: 1px solid rgba(0, 255, 157, 0.55);
+  color: #0ecb81;
+  background: rgba(14, 203, 129, 0.15);
+  border: 1px solid rgba(14, 203, 129, 0.35);
   padding: 0.22rem 0.62rem;
   border-radius: 999px;
 }
@@ -73,9 +73,9 @@
 .licenseDangerBadge {
   font-size: 0.75rem;
   font-weight: 700;
-  color: #ffe0e0;
-  background: rgba(255, 77, 77, 0.22);
-  border: 1px solid rgba(255, 77, 77, 0.55);
+  color: #f6465d;
+  background: rgba(246, 70, 93, 0.15);
+  border: 1px solid rgba(246, 70, 93, 0.35);
   padding: 0.22rem 0.62rem;
   border-radius: 999px;
 }
@@ -83,16 +83,16 @@
 .licenseWarningBadge {
   font-size: 0.75rem;
   font-weight: 700;
-  color: #fff1cc;
-  background: rgba(255, 193, 7, 0.2);
-  border: 1px solid rgba(255, 193, 7, 0.45);
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.35);
   padding: 0.22rem 0.62rem;
   border-radius: 999px;
 }
 
 .licenseExpiry {
   font-size: 0.85rem;
-  color: rgba(255, 255, 255, 0.78);
+  color: var(--muted);
 }
 
 .licenseRight {
@@ -106,11 +106,11 @@
   display: flex;
   justify-content: space-between;
   font-size: 0.84rem;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--muted);
 }
 
 .usageTopRow strong {
-  color: #fff;
+  color: var(--text);
   font-size: 1.05rem;
 }
 
@@ -119,19 +119,19 @@
   height: 8px;
   border-radius: 999px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .usageProgressFill {
   height: 100%;
-  background: linear-gradient(90deg, rgba(255, 88, 88, 0.9), rgba(255, 163, 67, 0.86));
+  background: linear-gradient(90deg, #fbd36a, #f7a600);
   border-radius: 999px;
   transition: width 0.2s ease;
 }
 
 .usagePercentText {
   font-size: 0.76rem;
-  color: rgba(255, 255, 255, 0.66);
+  color: var(--muted);
   text-align: right;
 }
 
@@ -157,7 +157,7 @@
   justify-content: space-between;
   align-items: center;
   padding: 0.95rem 1rem;
-  border-bottom: 1px solid rgba(255, 75, 75, 0.34);
+  border-bottom: 1px solid var(--border);
 }
 
 .sectionHeader h3 {
@@ -166,14 +166,14 @@
 }
 
 .inlineLink {
-  color: #ffb3a5;
+  color: #f7a600;
   font-size: 0.82rem;
   font-weight: 600;
   transition: color 0.18s ease;
 }
 
 .inlineLink:hover {
-  color: #ffd8d1;
+  color: #ffce5a;
 }
 
 .activityList {
@@ -185,7 +185,7 @@
 }
 
 .mutedLine {
-  color: rgba(255, 255, 255, 0.68);
+  color: var(--muted);
   font-size: 0.84rem;
   padding: 0.6rem 0;
 }
@@ -212,19 +212,19 @@
 }
 
 .activityDot-success {
-  background: #19d86b;
+  background: #0ecb81;
 }
 
 .activityDot-error {
-  background: #ff4d4d;
+  background: #f6465d;
 }
 
 .activityDot-warning {
-  background: #ffd60a;
+  background: #f59e0b;
 }
 
 .activityDot-info {
-  background: #56a5ff;
+  background: #3b82f6;
 }
 
 .activityContent {
@@ -235,13 +235,13 @@
 
 .activityMessage {
   font-size: 0.84rem;
-  color: #f3efef;
+  color: var(--text);
   line-height: 1.25;
 }
 
 .activityTime {
   font-size: 0.74rem;
-  color: rgba(255, 255, 255, 0.64);
+  color: var(--muted);
 }
 
 .quickActions {
@@ -256,7 +256,7 @@
   border: 1px solid rgba(181, 190, 211, 0.38);
   border-radius: 6px;
   min-height: 40px;
-  background: linear-gradient(180deg, rgba(61, 68, 85, 0.82), rgba(42, 49, 65, 0.82));
+  background: linear-gradient(180deg, #1a1f26, #11161d);
   color: #f7f9ff;
   font-size: 0.85rem;
   font-weight: 700;
@@ -278,8 +278,9 @@
 }
 
 .quickBtnPrimary {
-  background: linear-gradient(180deg, #ff4747, #ea2f2f);
-  border-color: rgba(255, 117, 117, 0.7);
+  background: linear-gradient(180deg, #fbd36a, #f7a600);
+  border-color: rgba(247, 166, 0, 0.8);
+  color: #0b0e11;
 }
 
 .quickBtnRow {
@@ -316,11 +317,12 @@
 .recentEmail {
   font-size: 0.86rem;
   font-weight: 600;
+  color: var(--text);
 }
 
 .recentCreated {
   font-size: 0.72rem;
-  color: rgba(255, 255, 255, 0.62);
+  color: var(--muted);
   margin-top: 0.12rem;
 }
 
@@ -333,20 +335,20 @@
 }
 
 .recentStatus.status-running {
-  color: #defff2;
-  background: rgba(25, 216, 107, 0.25);
+  color: #0ecb81;
+  background: rgba(14, 203, 129, 0.15);
 }
 
 .recentStatus.status-crashed,
 .recentStatus.status-error {
-  color: #ffdede;
-  background: rgba(255, 77, 77, 0.26);
+  color: #f6465d;
+  background: rgba(246, 70, 93, 0.15);
 }
 
 .recentStatus.status-stopped,
 .recentStatus.status-default {
-  color: #e5ecff;
-  background: rgba(148, 163, 184, 0.24);
+  color: #9ca3af;
+  background: rgba(107, 114, 128, 0.2);
 }
 
 .viewAllAccountsBtn {
@@ -354,13 +356,13 @@
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  color: #ffbeb1;
+  color: #f7a600;
   font-size: 0.84rem;
   font-weight: 600;
 }
 
 .viewAllAccountsBtn:hover {
-  color: #ffd8d2;
+  color: #ffce5a;
 }
 
 @media (max-width: 1140px) {

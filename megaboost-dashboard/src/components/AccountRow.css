@@ -53,23 +53,23 @@
 }
 
 .actionStart {
-  color: var(--cy-green);
+  color: var(--success);
 }
 
 .actionRestart {
-  color: var(--cy-orange);
+  color: var(--warning);
 }
 
 .actionView {
-  color: var(--cy-blue);
+  color: var(--info);
 }
 
 .actionEdit {
-  color: var(--cy-yellow);
+  color: var(--accent);
 }
 
 .actionDelete {
-  color: var(--cy-red);
+  color: var(--danger);
 }
 
 .shieldBtn img {
@@ -97,33 +97,39 @@
 }
 
 .status-running {
-  background: rgba(0, 255, 157, 0.16);
-  color: #b8ffe7;
-  border-color: rgba(0, 255, 157, 0.4);
-  box-shadow: 0 0 7px rgba(0, 255, 157, 0.25);
+  background: rgba(14, 203, 129, 0.15);
+  color: #0ecb81;
+  border-color: rgba(14, 203, 129, 0.35);
 }
 
 .status-stopped {
-  background: rgba(148, 163, 184, 0.18);
-  color: #dbe6f3;
-  border-color: rgba(148, 163, 184, 0.3);
+  background: rgba(107, 114, 128, 0.2);
+  color: #9ca3af;
+  border-color: rgba(107, 114, 128, 0.35);
 }
 
 .status-crashed,
 .status-error,
 .status-verification_failed,
-.status-2fa_failed {
-  background: rgba(255, 59, 59, 0.2);
-  color: #ffd4d4;
-  border-color: rgba(255, 59, 59, 0.44);
+.status-2fa_failed,
+.status-banned {
+  background: rgba(246, 70, 93, 0.15);
+  color: #f6465d;
+  border-color: rgba(246, 70, 93, 0.35);
 }
 
 .status-awaiting_2fa,
 .status-awaiting_verification_code,
 .status-needs2fa {
-  background: rgba(0, 207, 255, 0.16);
-  color: #d8f8ff;
-  border-color: rgba(0, 207, 255, 0.45);
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+.status-paused {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.35);
 }
 
 .status-default {
@@ -150,10 +156,9 @@
   border-radius: 999px;
   font-size: 11px;
   font-weight: 700;
-  color: #d8fff3;
-  background: rgba(0, 255, 170, 0.18);
-  border: 1px solid rgba(0, 255, 170, 0.45);
-  box-shadow: 0 0 10px rgba(0, 255, 170, 0.3);
+  color: #0ecb81;
+  background: rgba(14, 203, 129, 0.15);
+  border: 1px solid rgba(14, 203, 129, 0.35);
 }
 
 .nextProgressWrap {
@@ -168,8 +173,8 @@
   min-width: 92px;
   height: 8px;
   border-radius: 999px;
-  background: rgba(25, 40, 56, 0.88);
-  border: 1px solid rgba(43, 64, 87, 0.95);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
   overflow: hidden;
 }
 
@@ -178,16 +183,13 @@
   inset: 0 auto 0 0;
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, #00ffd0 0%, #8bff86 100%);
-  box-shadow:
-    0 0 9px rgba(0, 255, 208, 0.75),
-    0 0 18px rgba(0, 255, 208, 0.35);
+  background: linear-gradient(90deg, #fbd36a 0%, #f7a600 100%);
   transition: width 0.9s linear;
 }
 
 .nextProgressPercent {
   font-size: 11px;
-  color: rgba(205, 233, 255, 0.9);
+  color: rgba(226, 232, 240, 0.9);
   min-width: 36px;
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -223,9 +225,9 @@
     gap: 0.52rem;
     padding: 0.8rem;
     margin: 0.7rem;
-    border: 1px solid rgba(255, 75, 75, 0.35);
+    border: 1px solid var(--border);
     border-radius: 0.75rem;
-    background: rgba(24, 6, 6, 0.68);
+    background: #11161d;
   }
 
   .accountRowCell {

@@ -56,7 +56,7 @@
 .add-card h2 {
   margin: 0 0 12px;
   font-size: 1.05rem;
-  color: #ffe1e1;
+  color: var(--text);
 }
 
 .field-grid {
@@ -73,7 +73,7 @@
 .field-block label {
   font-size: 13px;
   margin-bottom: 6px;
-  color: rgba(255, 255, 255, 0.86);
+  color: rgba(226, 232, 240, 0.9);
 }
 
 .field-block input,
@@ -91,8 +91,8 @@
 .field-block input:focus,
 .field-block select:focus,
 .field-block textarea:focus {
-  border-color: rgba(255, 117, 117, 0.72);
-  box-shadow: 0 0 0 1px rgba(255, 72, 72, 0.18);
+  border-color: rgba(247, 166, 0, 0.7);
+  box-shadow: 0 0 0 1px rgba(247, 166, 0, 0.2);
 }
 
 .time-picker-row {
@@ -108,14 +108,14 @@
 
 .time-picker-separator {
   font-size: 1.15rem;
-  color: rgba(255, 225, 225, 0.86);
+  color: var(--text);
   text-align: center;
 }
 
 .hint {
   margin: 6px 0 0;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.64);
+  color: var(--muted);
 }
 
 .field-error {
@@ -128,7 +128,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--text);
 }
 
 .group-label {
@@ -144,9 +144,9 @@
 }
 
 .chip-row button {
-  border: 1px solid rgba(255, 75, 75, 0.4);
-  background: rgba(44, 10, 10, 0.68);
-  color: #f2d4d4;
+  border: 1px solid rgba(247, 166, 0, 0.7);
+  background: rgba(247, 166, 0, 0.08);
+  color: #f7a600;
   border-radius: 999px;
   font-size: 12px;
   padding: 6px 10px;
@@ -155,7 +155,7 @@
 }
 
 .chip-row button:hover {
-  border-color: rgba(255, 117, 117, 0.72);
+  border-color: rgba(247, 166, 0, 0.9);
   transform: translateY(-1px);
 }
 
@@ -171,7 +171,7 @@
 
 .form-success {
   margin: 0;
-  color: #8df2a4;
+  color: #0ecb81;
 }
 
 .actions-row {
@@ -191,8 +191,8 @@
 }
 
 .btn-cancel {
-  border: 1px solid rgba(181, 190, 211, 0.38);
-  background: linear-gradient(180deg, rgba(61, 68, 85, 0.82), rgba(42, 49, 65, 0.82));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: linear-gradient(180deg, #1a1f26, #11161d);
 }
 
 .btn-cancel:hover {
@@ -201,14 +201,15 @@
 }
 
 .btn-primary {
-  border: 1px solid rgba(255, 117, 117, 0.7);
-  background: linear-gradient(180deg, var(--accent-strong), var(--accent));
+  border: 1px solid rgba(247, 166, 0, 0.8);
+  background: linear-gradient(180deg, #fbd36a, var(--accent));
   font-weight: 700;
+  color: #0b0e11;
 }
 
 .btn-primary:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 0 16px rgba(255, 72, 72, 0.25);
+  box-shadow: 0 0 16px rgba(247, 166, 0, 0.3);
 }
 
 .btn-primary:disabled {

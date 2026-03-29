@@ -1,52 +1,31 @@
 .navbarNeon {
   position: relative;
   isolation: isolate;
-  background: linear-gradient(180deg, rgba(37, 8, 8, 0.94), rgba(22, 4, 4, 0.94));
-  border-bottom: 1px solid rgba(255, 59, 59, 0.24);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.26);
-}
-
-.navbarNeon::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -1px;
-  height: 2px;
-  background: linear-gradient(90deg, rgba(255, 59, 59, 0.15), rgba(0, 207, 255, 0.45), rgba(0, 255, 157, 0.3), rgba(255, 59, 59, 0.15));
-  background-size: 240% 100%;
-  filter: blur(0.2px);
-  animation: navBorderFlow 11s linear infinite;
-}
-
-@keyframes navBorderFlow {
-  from {
-    background-position: 0% 0;
-  }
-  to {
-    background-position: 240% 0;
-  }
+  background: #0d1117;
+  border-bottom: 1px solid var(--border);
+  height: 52px;
+  display: flex;
+  align-items: center;
 }
 
 .brandGlow {
-  letter-spacing: 0.2px;
-  text-shadow: 0 0 8px rgba(255, 59, 59, 0.36);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .navLinkNeon {
   position: relative;
-  color: rgba(255, 255, 255, 0.82);
-  transition: color 0.18s ease, text-shadow 0.18s ease;
+  color: rgba(226, 232, 240, 0.82);
+  transition: color 0.18s ease;
+  padding-bottom: 6px;
 }
 
 .navLinkNeon:hover {
   color: #fff;
-  text-shadow: 0 0 7px rgba(0, 207, 255, 0.54);
 }
 
 .navLinkNeonActive {
-  color: #f7ffff;
-  text-shadow: 0 0 8px rgba(0, 255, 157, 0.56);
+  color: #f7a600;
 }
 
 .navLinkNeonActive::after {
@@ -54,54 +33,52 @@
   position: absolute;
   left: 0;
   right: 0;
-  bottom: -9px;
+  bottom: -6px;
   height: 2px;
   border-radius: 999px;
-  background: linear-gradient(90deg, rgba(0, 255, 157, 0.9), rgba(0, 207, 255, 0.8));
-  box-shadow: 0 0 9px rgba(0, 255, 157, 0.55);
+  background: #f7a600;
 }
 
 .licensePill {
-  background: rgba(0, 255, 157, 0.11);
-  border: 1px solid rgba(0, 255, 157, 0.34);
-  color: #c0ffea;
+  background: rgba(14, 203, 129, 0.15);
+  border: 1px solid rgba(14, 203, 129, 0.35);
+  color: #0ecb81;
 }
 
 .licensePillActive {
-  background: rgba(0, 255, 157, 0.11);
-  border-color: rgba(0, 255, 157, 0.34);
-  color: #c0ffea;
+  background: rgba(14, 203, 129, 0.15);
+  border-color: rgba(14, 203, 129, 0.35);
+  color: #0ecb81;
 }
 
 .licensePillWarning {
-  background: rgba(255, 193, 7, 0.12);
-  border-color: rgba(255, 193, 7, 0.35);
-  color: #ffe5a0;
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.35);
+  color: #f59e0b;
 }
 
 .licensePillDanger {
-  background: rgba(255, 59, 59, 0.14);
-  border-color: rgba(255, 59, 59, 0.42);
-  color: #ffd1d1;
+  background: rgba(246, 70, 93, 0.15);
+  border-color: rgba(246, 70, 93, 0.4);
+  color: #f6465d;
 }
 
 .licensePillNeutral {
-  background: rgba(0, 207, 255, 0.14);
-  border-color: rgba(0, 207, 255, 0.38);
-  color: #ccf5ff;
+  background: rgba(34, 211, 238, 0.15);
+  border-color: rgba(34, 211, 238, 0.35);
+  color: #22d3ee;
 }
 
 .userPill {
-  background: rgba(255, 59, 59, 0.1);
-  border: 1px solid rgba(255, 59, 59, 0.36);
-  box-shadow: 0 0 8px rgba(255, 59, 59, 0.18);
+  background: rgba(34, 211, 238, 0.12);
+  border: 1px solid rgba(34, 211, 238, 0.35);
 }
 
 .navInner {
   width: 100%;
   max-width: 1520px;
   margin: 0 auto;
-  padding: 0.9rem 1rem;
+  padding: 0 1rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -161,16 +138,16 @@
   align-items: center;
   gap: 0.4rem;
   border-radius: 0.7rem;
-  border: 1px solid rgba(255, 59, 59, 0.4);
-  background: rgba(255, 59, 59, 0.14);
-  color: #ffe5e5;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: #e2e8f0;
   padding: 0.35rem 0.7rem;
   transition: border-color 0.2s ease, transform 0.15s ease, background 0.2s ease;
 }
 
 .logoutBtn:hover:not(:disabled) {
-  border-color: rgba(0, 207, 255, 0.5);
-  background: rgba(0, 207, 255, 0.14);
+  border-color: rgba(247, 166, 0, 0.6);
+  background: rgba(247, 166, 0, 0.12);
 }
 
 .logoutBtn:disabled {
@@ -182,19 +159,19 @@
   width: 44px;
   height: 44px;
   border-radius: 11px;
-  border: 1px solid rgba(255, 59, 59, 0.44);
-  background: linear-gradient(180deg, rgba(53, 10, 10, 0.92), rgba(30, 6, 6, 0.94));
-  color: #f7ffff;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, #1a1f26, #11161d);
+  color: #e2e8f0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 0 10px rgba(255, 59, 59, 0.2);
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.25);
   transition: transform 0.18s ease, box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
 .hamburgerBtn:hover {
-  border-color: rgba(0, 207, 255, 0.55);
-  box-shadow: 0 0 12px rgba(0, 207, 255, 0.28);
+  border-color: rgba(247, 166, 0, 0.6);
+  box-shadow: 0 0 12px rgba(247, 166, 0, 0.25);
 }
 
 .hamburgerBtn:active {
@@ -221,7 +198,7 @@
   overflow: hidden;
   transform: translateY(-8px);
   transition: max-height 0.25s ease, opacity 0.22s ease, transform 0.22s ease;
-  border-top: 1px solid rgba(255, 59, 59, 0.22);
+  border-top: 1px solid var(--border);
   pointer-events: none;
 }
 

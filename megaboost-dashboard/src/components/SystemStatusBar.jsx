@@ -151,7 +151,7 @@ export default function SystemStatusBar() {
       <span className="statusSegment statusLive">
         <span className={`statusDot ${connected ? "connected" : "disconnected"}`} />
         {connected ? "Live Connected" : "Live Disconnected"}
-        {" - "}
+        {" — "}
         {`Workers Running: ${workersRunning}`}
       </span>
       <span className="statusDivider">|</span>
