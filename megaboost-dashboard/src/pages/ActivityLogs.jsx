@@ -34,17 +34,31 @@ function formatDateTime(value) {
   return formatDateTimeBDT(value);
 }
 
-function levelBadgeClass(level) {
-  switch (level) {
-    case "success":
-      return "border-green-500/40 bg-green-500/15 text-green-300";
-    case "warning":
-      return "border-yellow-500/40 bg-yellow-500/15 text-yellow-300";
-    case "error":
-      return "border-red-500/40 bg-red-500/15 text-red-300";
-    default:
-      return "border-blue-500/40 bg-blue-500/15 text-blue-300";
+const LEVEL_STYLES = {
+  success: {
+    background: "rgba(14,203,129,0.15)",
+    color: "#0ecb81",
+    borderColor: "rgba(14,203,129,0.35)"
+  },
+  warning: {
+    background: "rgba(245,158,11,0.15)",
+    color: "#f59e0b",
+    borderColor: "rgba(245,158,11,0.35)"
+  },
+  error: {
+    background: "rgba(246,70,93,0.15)",
+    color: "#f6465d",
+    borderColor: "rgba(246,70,93,0.35)"
+  },
+  info: {
+    background: "rgba(59,130,246,0.15)",
+    color: "#3b82f6",
+    borderColor: "rgba(59,130,246,0.35)"
   }
+};
+
+function levelBadgeStyle(level) {
+  return LEVEL_STYLES[level] || LEVEL_STYLES.info;
 }
 
 function getVisiblePages(currentPage, totalPages) {
@@ -344,11 +358,11 @@ export default function ActivityLogs() {
   const showingTo = total === 0 ? 0 : Math.min(page * limit, total);
 
   const statCards = [
-    { label: "Total", value: stats.total, colorClass: "text-white" },
-    { label: "Success", value: stats.success, colorClass: "text-green-400" },
-    { label: "Warning", value: stats.warning, colorClass: "text-yellow-400" },
-    { label: "Error", value: stats.error, colorClass: "text-red-400" },
-    { label: "Info", value: stats.info, colorClass: "text-blue-300" }
+    { label: "Total", value: stats.total, color: "#e2e8f0" },
+    { label: "Success", value: stats.success, color: "#0ecb81" },
+    { label: "Warning", value: stats.warning, color: "#f59e0b" },
+    { label: "Error", value: stats.error, color: "#f6465d" },
+    { label: "Info", value: stats.info, color: "#3b82f6" }
   ];
 
   const applyFilters = () => {
@@ -406,7 +420,7 @@ export default function ActivityLogs() {
         <button
           type="button"
           onClick={() => navigate("/")}
-          className="w-full sm:w-auto rounded-lg border border-red-700 px-4 py-2 text-sm font-medium transition hover:bg-red-900/40"
+          className="w-full sm:w-auto rounded-lg border themeBorder px-4 py-2 text-sm font-medium transition hover:bg-[#161b22]"
         >
           Back to Dashboard
         </button>
@@ -414,14 +428,16 @@ export default function ActivityLogs() {
 
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
         {statCards.map((card) => (
-          <article key={card.label} className="rounded-xl border border-red-800 bg-card p-4">
+          <article key={card.label} className="rounded-xl border themeBorder bg-card p-4">
             <p className="text-sm opacity-70">{card.label}</p>
-            <p className={`mt-2 text-2xl font-bold ${card.colorClass}`}>{card.value}</p>
+            <p className="mt-2 text-2xl font-bold" style={{ color: card.color }}>
+              {card.value}
+            </p>
           </article>
         ))}
       </section>
 
-      <section className="rounded-xl border border-red-800 bg-card p-4">
+      <section className="rounded-xl border themeBorder bg-card p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
           <input
             type="text"
@@ -431,7 +447,7 @@ export default function ActivityLogs() {
               setSearchInput(event.target.value);
               pauseForTyping();
             }}
-            className="w-full rounded-lg border border-red-900 bg-red-950/30 px-3 py-2 text-sm outline-none placeholder:text-zinc-400 focus:border-red-600"
+            className="w-full rounded-lg themeField px-3 py-2 text-sm outline-none placeholder:text-zinc-400"
           />
 
           <select
@@ -440,7 +456,7 @@ export default function ActivityLogs() {
               setLevel(event.target.value);
               pauseForTyping();
             }}
-            className="w-full lg:w-auto min-w-[160px] rounded-lg border border-red-900 bg-red-950/30 px-3 py-2 text-sm outline-none focus:border-red-600"
+            className="w-full lg:w-auto min-w-[160px] rounded-lg themeField px-3 py-2 text-sm outline-none"
           >
             <option value="all">All Levels</option>
             <option value="success">Success</option>
@@ -453,28 +469,29 @@ export default function ActivityLogs() {
             type="button"
             onClick={applyFilters}
             className="w-full lg:w-auto rounded-lg bg-accent px-4 py-2 text-sm font-medium"
-          >
-            Filter
-          </button>
+        >
+          Filter
+        </button>
 
-          <button
-            type="button"
-            onClick={clearFilters}
-            className="w-full lg:w-auto rounded-lg border border-red-700 px-4 py-2 text-sm font-medium"
-          >
-            Clear
-          </button>
+        <button
+          type="button"
+          onClick={clearFilters}
+          className="w-full lg:w-auto rounded-lg border themeBorder px-4 py-2 text-sm font-medium hover:bg-[#161b22]"
+        >
+          Clear
+        </button>
 
-          <label className="ml-0 flex items-center gap-2 text-sm lg:ml-auto">
-            <input
-              type="checkbox"
-              checked={autoRefresh}
-              onChange={(event) => setAutoRefresh(event.target.checked)}
-              className="h-4 w-4 rounded border-red-700 bg-red-950"
-            />
-            <span>Auto refresh</span>
-          </label>
-        </div>
+        <label className="ml-0 flex items-center gap-2 text-sm lg:ml-auto">
+          <input
+            type="checkbox"
+            checked={autoRefresh}
+            onChange={(event) => setAutoRefresh(event.target.checked)}
+            className="h-4 w-4 rounded border themeBorder bg-[#0f1319]"
+            style={{ accentColor: "#f7a600" }}
+          />
+          <span>Auto refresh</span>
+        </label>
+      </div>
 
         {autoRefresh && (
           <p className="mt-2 text-xs opacity-70">
@@ -483,8 +500,12 @@ export default function ActivityLogs() {
         )}
       </section>
 
-      <section className="rounded-xl border border-red-800 bg-card p-2 sm:p-4">
-        {error && <div className="mb-3 rounded-md border border-red-700 bg-red-950/50 px-3 py-2 text-sm text-red-200">{error}</div>}
+      <section className="rounded-xl border themeBorder bg-card p-2 sm:p-4">
+        {error && (
+          <div className="mb-3 rounded-md border themeBorder px-3 py-2 text-sm" style={{ background: "rgba(246,70,93,0.1)", color: "#f6465d" }}>
+            {error}
+          </div>
+        )}
 
         {loading && items.length === 0 && (
           <div className="px-3 py-8 text-center text-sm opacity-70">Loading logs...</div>
@@ -495,7 +516,7 @@ export default function ActivityLogs() {
         )}
 
         {items.length > 0 && (
-          <div className="divide-y divide-red-900/60">
+          <div className="divide-y" style={{ borderColor: "var(--border)" }}>
             {items.map((log) => {
               const displayKey = resolveDisplayKey(log);
 
@@ -514,7 +535,10 @@ export default function ActivityLogs() {
                     )}
                   </div>
 
-                  <span className={`self-start rounded-full border px-2.5 py-1 text-xs font-semibold uppercase ${levelBadgeClass(log.level)}`}>
+                  <span
+                    className="self-start rounded-full border px-2.5 py-1 text-xs font-semibold uppercase"
+                    style={levelBadgeStyle(log.level)}
+                  >
                     {log.level || "info"}
                   </span>
                 </article>
@@ -523,7 +547,7 @@ export default function ActivityLogs() {
           </div>
         )}
 
-        <div className="mt-4 flex flex-col gap-3 border-t border-red-900/60 pt-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mt-4 flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between" style={{ borderColor: "var(--border)" }}>
           <p className="text-sm opacity-70">
             Showing {showingFrom} to {showingTo} of {total} results
           </p>
@@ -533,7 +557,7 @@ export default function ActivityLogs() {
               type="button"
               onClick={() => goToPage(page - 1)}
               disabled={page <= 1}
-              className="rounded-md border border-red-700 px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded-md border themeBorder px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-40 hover:bg-[#161b22]"
             >
               Prev
             </button>
@@ -555,11 +579,12 @@ export default function ActivityLogs() {
                   key={pageNumber}
                   type="button"
                   onClick={() => goToPage(pageNumber)}
-                  className={`rounded-md border px-3 py-1.5 text-sm ${
+                  className="rounded-md border px-3 py-1.5 text-sm"
+                  style={
                     active
-                      ? "border-red-500 bg-red-600/25 text-red-100"
-                      : "border-red-700 hover:bg-red-900/40"
-                  }`}
+                      ? { borderColor: "#f7a600", background: "rgba(247,166,0,0.18)", color: "#f7a600" }
+                      : { borderColor: "var(--border)" }
+                  }
                 >
                   {pageNumber}
                 </button>
@@ -570,7 +595,7 @@ export default function ActivityLogs() {
               type="button"
               onClick={() => goToPage(page + 1)}
               disabled={page >= totalPages}
-              className="rounded-md border border-red-700 px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded-md border themeBorder px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-40 hover:bg-[#161b22]"
             >
               Next
             </button>
