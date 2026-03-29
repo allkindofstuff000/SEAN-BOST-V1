@@ -50,6 +50,11 @@ main {
   background: var(--bg);
 }
 
+.pageShell,
+.pageInner {
+  background: var(--bg);
+}
+
 .bg-card {
   background: var(--card) !important;
 }
