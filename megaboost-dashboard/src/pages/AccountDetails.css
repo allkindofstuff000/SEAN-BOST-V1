@@ -1,5 +1,5 @@
 .account-details-page {
-  color: #fbe5e5;
+  color: var(--text);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -10,20 +10,20 @@
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: #cfadad;
+  color: var(--muted);
 }
 
 .account-details-breadcrumb a {
-  color: #cfadad;
+  color: var(--muted);
   text-decoration: none;
 }
 
 .account-details-breadcrumb a:hover {
-  color: #fff;
+  color: var(--text);
 }
 
 .account-details-breadcrumb .current {
-  color: #ffe1e1;
+  color: var(--text);
 }
 
 .account-details-header {
@@ -41,20 +41,26 @@
 
 .account-details-header p {
   margin: 6px 0 0;
-  color: #d2b1b1;
+  color: var(--muted);
 }
 
 .account-details-edit-btn {
-  border: 1px solid rgba(255, 133, 133, 0.3);
+  border: 1px solid var(--border);
   border-radius: 10px;
   min-height: 38px;
   padding: 0 13px;
-  background: rgba(65, 24, 24, 0.8);
-  color: #f9e6e6;
+  background: #11161d;
+  color: var(--text);
   display: inline-flex;
   align-items: center;
   gap: 8px;
   font-size: 13px;
+  transition: border-color 0.18s ease, transform 0.18s ease;
+}
+
+.account-details-edit-btn:hover:not(:disabled) {
+  border-color: rgba(247, 166, 0, 0.7);
+  transform: translateY(-1px);
 }
 
 .account-details-edit-btn:disabled {
@@ -77,17 +83,17 @@
 }
 
 .account-details-card {
-  border: 1px solid rgba(255, 102, 102, 0.25);
+  border: 1px solid var(--border);
   border-radius: 14px;
-  background: linear-gradient(180deg, rgba(31, 10, 10, 0.92), rgba(20, 6, 6, 0.92));
+  background: var(--card);
   padding: 14px;
-  box-shadow: inset 0 1px 0 rgba(255, 140, 140, 0.08);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
 }
 
 .account-details-card h2 {
   margin: 0 0 12px;
   font-size: 17px;
-  color: #ffe5e5;
+  color: var(--text);
 }
 
 .account-details-fields {
@@ -101,22 +107,22 @@
 }
 
 .account-details-fields > div {
-  border: 1px solid rgba(255, 118, 118, 0.18);
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 9px;
-  background: rgba(50, 14, 14, 0.55);
+  background: #11161d;
 }
 
 .account-details-fields span {
   display: block;
   font-size: 12px;
-  color: #c9a5a5;
+  color: var(--muted);
   margin-bottom: 4px;
 }
 
 .account-details-fields strong {
   font-size: 13px;
-  color: #ffe8e8;
+  color: var(--text);
   font-weight: 600;
   word-break: break-word;
 }
@@ -133,40 +139,42 @@
 }
 
 .adp-status-running {
-  background: rgba(0, 255, 157, 0.16);
-  border-color: rgba(0, 255, 157, 0.4);
-  color: #c9ffe8;
+  background: rgba(14, 203, 129, 0.15);
+  border-color: rgba(14, 203, 129, 0.35);
+  color: #0ecb81;
 }
 
 .adp-status-stopped,
 .adp-status-default {
-  background: rgba(148, 163, 184, 0.18);
-  border-color: rgba(148, 163, 184, 0.35);
-  color: #e2ecf8;
+  background: rgba(107, 114, 128, 0.2);
+  border-color: rgba(107, 114, 128, 0.35);
+  color: #9ca3af;
 }
 
 .adp-status-crashed,
 .adp-status-error,
 .adp-status-verification_failed,
-.adp-status-2fa_failed {
-  background: rgba(255, 59, 59, 0.2);
-  border-color: rgba(255, 59, 59, 0.45);
-  color: #ffe0e0;
+.adp-status-2fa_failed,
+.adp-status-banned {
+  background: rgba(246, 70, 93, 0.15);
+  border-color: rgba(246, 70, 93, 0.35);
+  color: #f6465d;
 }
 
 .adp-status-awaiting_2fa,
-.adp-status-awaiting_verification_code {
-  background: rgba(0, 207, 255, 0.18);
-  border-color: rgba(0, 207, 255, 0.43);
-  color: #d8f7ff;
+.adp-status-awaiting_verification_code,
+.adp-status-needs2fa {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.35);
+  color: #3b82f6;
 }
 
 .account-details-ua {
   margin: 0;
   border-radius: 10px;
-  border: 1px solid rgba(255, 120, 120, 0.2);
-  background: rgba(7, 2, 2, 0.7);
-  color: #f8e4e4;
+  border: 1px solid var(--border);
+  background: #0f1319;
+  color: var(--text);
   padding: 11px;
   font-size: 12px;
   line-height: 1.45;
@@ -185,13 +193,13 @@
 
 .adp-list li {
   border-radius: 10px;
-  border: 1px solid rgba(255, 114, 114, 0.18);
-  background: rgba(50, 14, 14, 0.56);
+  border: 1px solid var(--border);
+  background: #11161d;
   padding: 9px;
 }
 
 .adp-list li div {
-  color: #ffe6e6;
+  color: var(--text);
   font-size: 13px;
   line-height: 1.4;
 }
@@ -200,19 +208,19 @@
   display: block;
   margin-top: 4px;
   font-size: 12px;
-  color: #caa4a4;
+  color: var(--muted);
 }
 
 .adp-empty {
   margin: 0;
   font-size: 13px;
-  color: #c8a7a7;
+  color: var(--muted);
 }
 
 .adp-total {
   margin: 0 0 10px;
   font-size: 13px;
-  color: #f0d4d4;
+  color: var(--text);
 }
 
 .adp-action-grid {
@@ -222,18 +230,19 @@
 }
 
 .adp-action-btn {
-  border: 1px solid rgba(255, 123, 123, 0.3);
+  border: 1px solid var(--border);
   border-radius: 10px;
   min-height: 39px;
   padding: 0 11px;
-  background: linear-gradient(180deg, rgba(71, 21, 21, 0.88), rgba(54, 15, 15, 0.88));
-  color: #ffe3e3;
+  background: linear-gradient(180deg, #1a1f26, #11161d);
+  color: var(--text);
   font-size: 13px;
   font-weight: 700;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 7px;
+  transition: transform 0.18s ease, border-color 0.18s ease;
 }
 
 .adp-action-btn:disabled {
@@ -242,8 +251,9 @@
 }
 
 .adp-action-btn.adp-primary {
-  background: linear-gradient(180deg, #db4949, #c33232);
-  border-color: rgba(255, 133, 133, 0.6);
+  background: linear-gradient(180deg, #fbd36a, #f7a600);
+  border-color: rgba(247, 166, 0, 0.8);
+  color: #0b0e11;
 }
 
 .account-details-loading {
@@ -251,18 +261,24 @@
   align-items: center;
   gap: 7px;
   font-size: 12px;
-  color: #d7b5b5;
+  color: var(--muted);
 }
 
 .account-details-back-btn {
-  border: 1px solid rgba(255, 123, 123, 0.33);
+  border: 1px solid var(--border);
   border-radius: 10px;
   min-height: 36px;
   width: fit-content;
   padding: 0 12px;
-  background: rgba(53, 16, 16, 0.8);
-  color: #f4dede;
+  background: #11161d;
+  color: var(--text);
   font-size: 13px;
+  transition: border-color 0.18s ease, transform 0.18s ease;
+}
+
+.account-details-back-btn:hover {
+  border-color: rgba(247, 166, 0, 0.7);
+  transform: translateY(-1px);
 }
 
 @media (max-width: 1050px) {
