@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(node *)",
+      "Bash(scp *)",
+      "Bash(ssh *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(mkdir *)",
+      "Bash(curl *)",
+      "Bash(sleep *)",
+      "Bash(cd *)",
+      "Bash(which *)",
+      "Bash(git *)",
+      "mcp__Claude_Preview__*",
+      "mcp__Claude_in_Chrome__*"
+    ]
+  }
+}

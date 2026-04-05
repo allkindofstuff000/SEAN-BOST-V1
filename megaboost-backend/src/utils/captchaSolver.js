@@ -44,7 +44,7 @@ function httpGet(urlString) {
       path: parsedUrl.pathname + parsedUrl.search,
       method: 'GET',
       headers: {
-        'User-Agent': 'MegaBoost/1.0 (2Captcha Client)',
+        'User-Agent': 'SeanBost/1.0 (2Captcha Client)',
       },
     };
 

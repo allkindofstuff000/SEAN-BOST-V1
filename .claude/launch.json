@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backend",
+      "runtimeExecutable": "C:/Users/MEGA - 4/Desktop/SEAN-BOST/.tools/node/node-v24.14.1-win-x64/node.exe",
+      "runtimeArgs": ["server.js"],
+      "port": 5000,
+      "cwd": "megaboost-backend"
+    },
+    {
+      "name": "dashboard",
+      "runtimeExecutable": "C:/Users/MEGA - 4/Desktop/SEAN-BOST/.tools/node/node-v24.14.1-win-x64/node.exe",
+      "runtimeArgs": ["node_modules/vite/bin/vite.js"],
+      "port": 5173,
+      "cwd": "megaboost-dashboard"
+    }
+  ]
+}

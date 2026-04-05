@@ -34,7 +34,7 @@ async function ensureDefaultAdminUser() {
     return earliestAdmin;
   }
 
-  const email = envString("ADMIN_EMAIL", "admin@megaboost.local").toLowerCase();
+  const email = envString("ADMIN_EMAIL", "admin@seanbost.local").toLowerCase();
   const username = envString("ADMIN_USERNAME", "admin");
   const password = envString("ADMIN_PASSWORD", "Admin123!");
 

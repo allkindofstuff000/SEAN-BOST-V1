@@ -13,7 +13,7 @@ export default function Navbar() {
       <div className="flex items-center gap-10">
         
         <div className="text-xl font-bold flex items-center gap-2">
-          ðŸš€ <span>MEGABOOSTV1</span>
+          ðŸš€ <span>SEANBOST</span>
         </div>
 
         <nav className="flex gap-8 text-sm font-medium items-center">

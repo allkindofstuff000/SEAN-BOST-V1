@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: "megaboost-backend",
+      name: "seanbost-backend",
       script: "server.js",
       instances: 1,
       autorestart: true,
@@ -14,7 +14,7 @@ module.exports = {
       }
     },
     {
-      name: "seanboost-telegram",
+      name: "seanbost-telegram",
       script: "src/telegram/controlProcessEntry.js",
       instances: 1,
       autorestart: true,

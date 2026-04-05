@@ -1,6 +1,6 @@
-﻿# MegaBoost Backend
+# SeanBost Backend
 
-Backend API and worker runtime for MegaBoost.
+Backend API and worker runtime for SeanBost.
 
 ## Local setup
 
@@ -85,7 +85,7 @@ PROCESS_ROLE=api node src/telegram/controlProcessEntry.js
 PM2 example:
 
 ```bash
-pm2 start ecosystem.config.cjs --only megaboost-backend,seanboost-telegram
+pm2 start ecosystem.config.cjs --only seanbost-backend,seanbost-telegram
 pm2 save
 ```
 

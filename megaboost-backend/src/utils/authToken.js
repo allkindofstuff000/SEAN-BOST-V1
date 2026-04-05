@@ -28,7 +28,7 @@ function shouldUseSecureCookies() {
 }
 
 function getAuthSecret() {
-  return process.env.AUTH_SECRET || "megaboost-dev-secret-change-me";
+  return process.env.AUTH_SECRET || "seanbost-dev-secret-change-me";
 }
 
 function signAuthToken(payload) {

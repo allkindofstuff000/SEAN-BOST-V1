@@ -189,11 +189,11 @@ async function ensureStarterUser({
 
 async function main() {
   const adminUsername = envString("SEED_ADMIN_USERNAME", "admin");
-  const adminEmail = envString("SEED_ADMIN_EMAIL", envString("ADMIN_EMAIL", "admin@megaboost.local"));
+  const adminEmail = envString("SEED_ADMIN_EMAIL", envString("ADMIN_EMAIL", "admin@seanbost.local"));
   const adminPassword = envString("SEED_ADMIN_PASSWORD", envString("ADMIN_PASSWORD", "Admin123!"));
 
   const starterUsername = envString("SEED_STARTER_USERNAME", "starter_user");
-  const starterEmail = envString("SEED_STARTER_EMAIL", "starter@megaboost.local");
+  const starterEmail = envString("SEED_STARTER_EMAIL", "starter@seanbost.local");
   const starterPassword = envString("SEED_STARTER_PASSWORD", "Starter123!");
 
   const starterMaxAccounts = Math.max(1, envInt("SEED_STARTER_MAX_ACCOUNTS", 5));

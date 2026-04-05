@@ -1,7 +1,7 @@
 {
-  "name": "megaboost-backend",
+  "name": "seanbost-backend",
   "version": "1.0.0",
-  "description": "MegaBoost Backend API",
+  "description": "SeanBost Backend API",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

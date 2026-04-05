@@ -140,7 +140,7 @@ async function main() {
 
   const adminIdentifier = envString(
     "SMOKE_ADMIN_IDENTIFIER",
-    envString("SEED_ADMIN_EMAIL", envString("ADMIN_EMAIL", "admin@megaboost.local"))
+    envString("SEED_ADMIN_EMAIL", envString("ADMIN_EMAIL", "admin@seanbost.local"))
   );
   const adminPassword = envString(
     "SMOKE_ADMIN_PASSWORD",

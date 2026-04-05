@@ -109,7 +109,7 @@ app.get("/api/health", (_req, res) => {
   const time = new Date().toISOString();
   return res.status(200).json({
     status: "ok",
-    app: "MEGABOOSTV1",
+    app: "SEANBOST",
     time,
     ok: true,
     ts: time
@@ -151,7 +151,7 @@ if (frontendDistPath) {
   });
 } else {
   app.get("/", (req, res) => {
-    res.json({ message: "MegaBoost Backend Running" });
+    res.json({ message: "SeanBost Backend Running" });
   });
 }
 
