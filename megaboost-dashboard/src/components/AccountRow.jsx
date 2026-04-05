@@ -189,79 +189,72 @@ function AccountRow({
       </div>
 
       <div className="accountRowCell accountRowActions" data-label="Actions">
-        <div className="actionWrap">
+        <div className="actionInline">
           <button
             onClick={handleToggle}
-            onMouseDown={addRipple}
             disabled={busy}
-            className={`cyber-btn ripple cyber-tooltip cyber-icon-btn neon-green ${busy ? "disabled" : ""}`}
-            data-tip={runningLike ? "Stop" : "Start"}
+            className="actionInlineBtn"
+            title={runningLike ? "Stop" : "Start"}
             type="button"
           >
             {busy ? (
-              <LoaderCircle className="actionIcon animate-spin actionStart" />
+              <LoaderCircle size={14} className="animate-spin actionStart" />
             ) : runningLike ? (
-              <Square className="actionIcon actionStart" />
+              <Square size={14} className="actionStop" />
             ) : (
-              <Play className="actionIcon actionStart" />
+              <Play size={14} className="actionStart" />
             )}
           </button>
 
           <button
             onClick={handleRestart}
-            onMouseDown={addRipple}
             disabled={busy}
-            className={`cyber-btn ripple cyber-tooltip cyber-icon-btn neon-orange ${busy ? "disabled" : ""}`}
-            data-tip="Restart"
+            className="actionInlineBtn"
+            title="Restart"
             type="button"
           >
-            <RotateCcw className="actionIcon actionRestart" />
-          </button>
-
-          <button
-            onClick={handleView}
-            onMouseDown={addRipple}
-            disabled={busy}
-            className={`cyber-btn ripple cyber-tooltip cyber-icon-btn neon-blue ${busy ? "disabled" : ""}`}
-            data-tip="Quick details"
-            type="button"
-          >
-            <Eye className="actionIcon actionView" />
-          </button>
-
-          <button
-            onClick={handleEdit}
-            onMouseDown={addRipple}
-            disabled={busy}
-            className={`cyber-btn ripple cyber-tooltip cyber-icon-btn neon-yellow ${busy ? "disabled" : ""}`}
-            data-tip="Edit"
-            type="button"
-          >
-            <SquarePen className="actionIcon actionEdit" />
+            <RotateCcw size={14} className="actionRestart" />
           </button>
 
           {show2faShield && (
             <button
               onClick={handleOpen2fa}
-              onMouseDown={addRipple}
               disabled={busy}
-              className={`cyber-btn ripple cyber-tooltip cyber-icon-btn neon-blue shieldBtn pulse-blue ${busy ? "disabled" : ""}`}
-              data-tip="Awaiting 2FA Code"
+              className="actionInlineBtn shieldBtn"
+              title="Awaiting 2FA Code"
               type="button"
             >
-              <img src={shield} alt="2FA" />
+              <img src={shield} alt="2FA" className="shieldImg" />
             </button>
           )}
 
           <button
-            onClick={handleDelete}
-            onMouseDown={addRipple}
+            onClick={handleView}
             disabled={busy}
-            className={`cyber-btn ripple cyber-tooltip cyber-icon-btn neon-red ${busy ? "disabled" : ""}`}
-            data-tip="Delete"
+            className="actionInlineBtn actionDetailsBtn"
             type="button"
           >
-            <Trash2 className="actionIcon actionDelete" />
+            <Eye size={14} className="actionView" />
+          </button>
+
+          <button
+            onClick={handleEdit}
+            disabled={busy}
+            className="actionInlineBtn"
+            title="Edit"
+            type="button"
+          >
+            <SquarePen size={14} className="actionEdit" />
+          </button>
+
+          <button
+            onClick={handleDelete}
+            disabled={busy}
+            className="actionInlineBtn"
+            title="Delete"
+            type="button"
+          >
+            <Trash2 size={14} className="actionDelete" />
           </button>
         </div>
       </div>

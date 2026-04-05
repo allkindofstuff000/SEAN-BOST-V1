@@ -25,22 +25,22 @@ const BUILD_MARKER_TIME = new Date().toISOString();
 
 function AppShell() {
   useEffect(() => {
-    console.log("MEGABOOSTV1 build", BUILD_MARKER_TIME);
+    console.log("SEANBOST build", BUILD_MARKER_TIME);
   }, []);
 
   return (
-    <div className="w-full min-h-screen flex flex-col">
+    <div className="w-full min-h-screen flex flex-col" style={{ background: "var(--bg)" }}>
       <Navbar />
       <SystemStatusBar />
 
-      <main className="w-full flex-1">
-        <div className="mx-auto w-full max-w-[1600px] px-4 py-4 sm:px-6 sm:py-5 lg:px-8 lg:py-6">
+      <main className="w-full flex-1 overflow-y-auto">
+        <div className="w-full p-6">
           <Outlet />
         </div>
       </main>
 
-      <footer className="w-full px-4 pb-4 text-center text-[11px] opacity-60">
-        MEGABOOSTV1 build {BUILD_MARKER_TIME}
+      <footer className="w-full px-6 pb-4 text-center text-[11px] opacity-60">
+        SEANBOOST &middot; seanboost.online
       </footer>
     </div>
   );

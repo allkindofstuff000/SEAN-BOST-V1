@@ -17,5 +17,9 @@ router.get("/stats", logController.getLogStats);
 
 router.get("/analytics", logController.getLogAnalytics);
 
+// Log analytics aggregation endpoints
+router.get("/source-ips", logController.getSourceIps);
+router.get("/affected-accounts", logController.getAffectedAccounts);
+router.get("/export", logController.exportLogs);
 
 module.exports = router;

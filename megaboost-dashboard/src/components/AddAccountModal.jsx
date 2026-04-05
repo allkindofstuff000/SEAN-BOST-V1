@@ -111,7 +111,7 @@ export default function AddAccountModal({ onClose }) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50 p-4 overflow-y-auto">
-      <div className="bg-card w-full max-w-3xl p-6 rounded-xl border border-red-800 shadow-xl">
+      <div className="themeCard w-full max-w-3xl p-6 rounded-xl">
         <div className="flex justify-between items-start mb-6">
           <div>
             <h2 className="text-xl font-semibold">Add New Account</h2>
@@ -139,7 +139,7 @@ export default function AddAccountModal({ onClose }) {
                   onChange={(e) => setField("email", e.target.value)}
                   placeholder="user@example.com"
                   required
-                  className="w-full bg-red-950 px-3 py-2 rounded-lg border border-red-800 outline-none focus:border-accent"
+                  className="w-full themeField px-3 py-2 rounded-lg outline-none"
                 />
               </Field>
 
@@ -151,7 +151,7 @@ export default function AddAccountModal({ onClose }) {
                   placeholder="Password"
                   minLength={6}
                   required
-                  className="w-full bg-red-950 px-3 py-2 rounded-lg border border-red-800 outline-none focus:border-accent"
+                  className="w-full themeField px-3 py-2 rounded-lg outline-none"
                 />
               </Field>
             </div>
@@ -166,7 +166,7 @@ export default function AddAccountModal({ onClose }) {
                   onChange={(e) => setField("proxyHost", e.target.value)}
                   placeholder="proxy.example.com"
                   required
-                  className="w-full bg-red-950 px-3 py-2 rounded-lg border border-red-800 outline-none focus:border-accent"
+                  className="w-full themeField px-3 py-2 rounded-lg outline-none"
                 />
               </Field>
 
@@ -177,7 +177,7 @@ export default function AddAccountModal({ onClose }) {
                   onChange={(e) => setField("proxyPort", e.target.value)}
                   placeholder="8080"
                   required
-                  className="w-full bg-red-950 px-3 py-2 rounded-lg border border-red-800 outline-none focus:border-accent"
+                  className="w-full themeField px-3 py-2 rounded-lg outline-none"
                 />
               </Field>
 
@@ -186,7 +186,7 @@ export default function AddAccountModal({ onClose }) {
                   value={form.proxyUsername}
                   onChange={(e) => setField("proxyUsername", e.target.value)}
                   placeholder="Optional"
-                  className="w-full bg-red-950 px-3 py-2 rounded-lg border border-red-800 outline-none focus:border-accent"
+                  className="w-full themeField px-3 py-2 rounded-lg outline-none"
                 />
               </Field>
 
@@ -196,7 +196,7 @@ export default function AddAccountModal({ onClose }) {
                   value={form.proxyPassword}
                   onChange={(e) => setField("proxyPassword", e.target.value)}
                   placeholder="Optional"
-                  className="w-full bg-red-950 px-3 py-2 rounded-lg border border-red-800 outline-none focus:border-accent"
+                  className="w-full themeField px-3 py-2 rounded-lg outline-none"
                 />
               </Field>
             </div>
@@ -210,7 +210,7 @@ export default function AddAccountModal({ onClose }) {
                 value={form.userAgent}
                 onChange={(e) => setField("userAgent", e.target.value)}
                 required
-                className="w-full bg-red-950 px-3 py-2 rounded-lg border border-red-800 outline-none focus:border-accent"
+                className="w-full themeField px-3 py-2 rounded-lg outline-none"
               />
             </Field>
 
@@ -254,7 +254,7 @@ export default function AddAccountModal({ onClose }) {
                   max={1440}
                   value={form.baseInterval}
                   onChange={(e) => setField("baseInterval", e.target.value)}
-                  className="w-full bg-red-950 px-3 py-2 rounded-lg border border-red-800 outline-none focus:border-accent"
+                  className="w-full themeField px-3 py-2 rounded-lg outline-none"
                 />
                 <p className="text-xs opacity-70 mt-1">Time between bumps (1-1440 minutes)</p>
               </Field>
@@ -267,7 +267,7 @@ export default function AddAccountModal({ onClose }) {
                 wrapperClassName="flex flex-col"
                 labelClassName="mb-1.5 text-sm text-white/90"
                 helperClassName="mt-1 text-xs text-white/60"
-                selectClassName="w-full bg-red-950 px-3 py-2 rounded-lg border border-red-800 outline-none focus:border-accent"
+                selectClassName="w-full themeField px-3 py-2 rounded-lg outline-none"
                 rowClassName="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(96px,0.8fr)] gap-2 items-center max-sm:grid-cols-2"
                 separatorClassName="text-lg opacity-70 text-center max-sm:hidden"
               />
@@ -280,7 +280,7 @@ export default function AddAccountModal({ onClose }) {
                 wrapperClassName="flex flex-col"
                 labelClassName="mb-1.5 text-sm text-white/90"
                 helperClassName="mt-1 text-xs text-white/60"
-                selectClassName="w-full bg-red-950 px-3 py-2 rounded-lg border border-red-800 outline-none focus:border-accent"
+                selectClassName="w-full themeField px-3 py-2 rounded-lg outline-none"
                 rowClassName="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(96px,0.8fr)] gap-2 items-center max-sm:grid-cols-2"
                 separatorClassName="text-lg opacity-70 text-center max-sm:hidden"
               />
@@ -291,7 +291,7 @@ export default function AddAccountModal({ onClose }) {
                   min={0}
                   value={form.randomMin}
                   onChange={(e) => setField("randomMin", e.target.value)}
-                  className="w-full bg-red-950 px-3 py-2 rounded-lg border border-red-800 outline-none focus:border-accent"
+                  className="w-full themeField px-3 py-2 rounded-lg outline-none"
                 />
               </Field>
 
@@ -301,7 +301,7 @@ export default function AddAccountModal({ onClose }) {
                   min={0}
                   value={form.randomMax}
                   onChange={(e) => setField("randomMax", e.target.value)}
-                  className="w-full bg-red-950 px-3 py-2 rounded-lg border border-red-800 outline-none focus:border-accent"
+                  className="w-full themeField px-3 py-2 rounded-lg outline-none"
                 />
               </Field>
 
@@ -312,7 +312,7 @@ export default function AddAccountModal({ onClose }) {
                   max={24}
                   value={form.maxDailyRuntime}
                   onChange={(e) => setField("maxDailyRuntime", e.target.value)}
-                  className="w-full bg-red-950 px-3 py-2 rounded-lg border border-red-800 outline-none focus:border-accent"
+                  className="w-full themeField px-3 py-2 rounded-lg outline-none"
                 />
               </Field>
             </div>
@@ -342,7 +342,7 @@ export default function AddAccountModal({ onClose }) {
 
           {error && <div className="text-red-400 text-sm">{error}</div>}
 
-          <section className="border border-red-800 rounded-lg p-4 bg-red-950/40">
+          <section className="border border-[var(--border)] rounded-lg p-4 bg-[var(--field)]">
             <h3 className="font-semibold mb-2">Account Limit Information</h3>
             <p className="text-sm opacity-80">
               You are currently using {usedAccounts} out of {accountLimit} accounts allowed by your license.

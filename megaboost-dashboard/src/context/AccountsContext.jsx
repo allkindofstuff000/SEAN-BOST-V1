@@ -29,7 +29,7 @@ function ToastStack({ toasts }) {
           key={toast.id}
           className={`rounded-md border px-3 py-2 text-sm shadow-lg ${
             toast.type === "error"
-              ? "border-red-700 bg-red-950 text-red-100"
+              ? "border-[var(--border)] bg-red-950/40 text-red-100"
               : "border-green-700 bg-green-950 text-green-100"
           }`}
         >

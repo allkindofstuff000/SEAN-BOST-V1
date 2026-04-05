@@ -123,7 +123,7 @@ export default function TelegramConfigModal({
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 p-4">
-      <div className="w-full max-w-lg rounded-xl border border-red-800 bg-card p-6 shadow-[0_0_25px_rgba(255,59,59,0.22)]">
+      <div className="w-full max-w-lg rounded-xl themeCard p-6">
         <div className="mb-6 flex items-start justify-between gap-3">
           <div>
             <h2 className="text-xl font-semibold">Configure Telegram</h2>
@@ -154,7 +154,7 @@ export default function TelegramConfigModal({
                 onChange={(event) => setBotToken(event.target.value)}
                 placeholder={maskedToken ? "Enter new token to replace" : "123456:ABC..."}
                 autoComplete="new-password"
-                className="w-full rounded-lg border border-red-800 bg-red-950 px-3 py-2 pr-10 outline-none transition focus:border-red-500"
+                className="w-full rounded-lg themeField px-3 py-2 pr-10 outline-none transition"
               />
               <button
                 type="button"
@@ -185,22 +185,22 @@ export default function TelegramConfigModal({
               value={chatId}
               onChange={(event) => setChatId(event.target.value)}
               placeholder="-1001234567890"
-              className="w-full rounded-lg border border-red-800 bg-red-950 px-3 py-2 outline-none transition focus:border-red-500"
+              className="w-full rounded-lg themeField px-3 py-2 outline-none transition"
             />
           </div>
 
-          <label className="flex items-center justify-between rounded-lg border border-red-900/80 bg-red-950/40 px-3 py-2 text-sm">
+          <label className="flex items-center justify-between rounded-lg border border-[var(--border)] bg-[var(--field)] px-3 py-2 text-sm">
             <span>Enable Telegram notifications</span>
             <input
               type="checkbox"
               checked={enabled}
               onChange={(event) => setEnabled(event.target.checked)}
-              className="h-4 w-4 accent-red-500"
+              className="h-4 w-4 accent-[#f7a600]"
             />
           </label>
 
           {error ? (
-            <div className="rounded-md border border-red-700 bg-red-950/70 px-3 py-2 text-sm text-red-200">
+            <div className="rounded-md border border-[var(--border)] bg-red-950/40 px-3 py-2 text-sm text-red-200">
               {error}
             </div>
           ) : null}

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { NavLink } from "react-router-dom";
 import { Copy, Eye, EyeOff, LoaderCircle, Plus, RefreshCw } from "lucide-react";
 import {
   adminCreateLicense,
@@ -6,6 +7,7 @@ import {
   adminUpdateLicense
 } from "../lib/api";
 import { useAccounts } from "../context/AccountsContext";
+import { useLanguage } from "../context/LanguageContext";
 
 function toDateTimeLocalValue(dateValue) {
   const date = dateValue ? new Date(dateValue) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
@@ -47,6 +49,32 @@ async function copyToClipboard(value) {
   return copied;
 }
 
+function AdminTabs() {
+  const { t } = useLanguage();
+  const tabs = [
+    { to: "/admin", label: t('admin.overview'), end: true },
+    { to: "/admin/users", label: t('admin.users') },
+    { to: "/admin/licenses", label: t('admin.licenses') }
+  ];
+
+  return (
+    <nav className="adminTabs">
+      {tabs.map((tab) => (
+        <NavLink
+          key={tab.to}
+          to={tab.to}
+          end={tab.end}
+          className={({ isActive }) =>
+            `adminTab ${isActive ? "active" : ""}`
+          }
+        >
+          {tab.label}
+        </NavLink>
+      ))}
+    </nav>
+  );
+}
+
 function LicenseModal({
   open,
   mode,
@@ -56,44 +84,45 @@ function LicenseModal({
   onChange,
   onSubmit
 }) {
+  const { t } = useLanguage();
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 p-4">
-      <div className="w-full max-w-lg rounded-xl border border-red-800 bg-card p-6 shadow-[0_0_25px_rgba(255,59,59,0.2)]">
+      <div className="w-full max-w-lg rounded-xl themeCard p-6">
         <h3 className="mb-4 text-xl font-semibold">
-          {mode === "edit" ? "Edit License" : "Create License"}
+          {mode === "edit" ? t('admin.editLicense') : t('admin.createLicense')}
         </h3>
 
         <div className="space-y-4">
           <label className="block">
-            <span className="mb-1 block text-sm text-white/80">Max Accounts</span>
+            <span className="mb-1 block text-sm text-white/80">{t('admin.maxAccounts')}</span>
             <input
               type="number"
               min="1"
               value={form.maxAccounts}
               onChange={(event) => onChange("maxAccounts", event.target.value)}
-              className="w-full rounded-lg border border-red-800 bg-red-950 px-3 py-2 outline-none focus:border-red-500"
+              className="w-full rounded-lg themeField px-3 py-2 outline-none"
             />
           </label>
 
           <label className="block">
-            <span className="mb-1 block text-sm text-white/80">Expires At</span>
+            <span className="mb-1 block text-sm text-white/80">{t('admin.expiresAt')}</span>
             <input
               type="datetime-local"
               value={form.expiresAt}
               onChange={(event) => onChange("expiresAt", event.target.value)}
-              className="w-full rounded-lg border border-red-800 bg-red-950 px-3 py-2 outline-none focus:border-red-500"
+              className="w-full rounded-lg themeField px-3 py-2 outline-none"
             />
           </label>
 
           {mode === "edit" ? (
             <label className="block">
-              <span className="mb-1 block text-sm text-white/80">Status</span>
+              <span className="mb-1 block text-sm text-white/80">{t('admin.status')}</span>
               <select
                 value={form.status}
                 onChange={(event) => onChange("status", event.target.value)}
-                className="w-full rounded-lg border border-red-800 bg-red-950 px-3 py-2 outline-none focus:border-red-500"
+                className="w-full rounded-lg themeField px-3 py-2 outline-none"
               >
                 <option value="active">active</option>
                 <option value="revoked">revoked</option>
@@ -102,12 +131,12 @@ function LicenseModal({
           ) : null}
 
           <label className="block">
-            <span className="mb-1 block text-sm text-white/80">Notes</span>
+            <span className="mb-1 block text-sm text-white/80">{t('admin.notes')}</span>
             <textarea
               value={form.notes}
               onChange={(event) => onChange("notes", event.target.value)}
               rows={3}
-              className="w-full rounded-lg border border-red-800 bg-red-950 px-3 py-2 outline-none focus:border-red-500"
+              className="w-full rounded-lg themeField px-3 py-2 outline-none"
             />
           </label>
         </div>
@@ -119,7 +148,7 @@ function LicenseModal({
             disabled={submitting}
             className="rounded-lg border border-gray-600 px-4 py-2 text-sm text-white/90 disabled:opacity-60"
           >
-            Cancel
+            {t('admin.cancel')}
           </button>
           <button
             type="button"
@@ -128,7 +157,7 @@ function LicenseModal({
             className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
           >
             {submitting ? <LoaderCircle size={14} className="animate-spin" /> : null}
-            {submitting ? "Saving..." : "Save"}
+            {submitting ? t('admin.saving') : t('admin.save')}
           </button>
         </div>
       </div>
@@ -138,6 +167,7 @@ function LicenseModal({
 
 export default function AdminLicenses() {
   const { showToast } = useAccounts();
+  const { t } = useLanguage();
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -293,33 +323,34 @@ export default function AdminLicenses() {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5" style={{ maxWidth: "1400px", margin: "0 auto", width: "100%" }}>
+      <AdminTabs />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-white sm:text-3xl">Admin Licenses</h1>
-          <p className="mt-1 text-sm text-white/70">Create, revoke, and edit account limits/expiry.</p>
+          <h1 className="text-2xl font-bold text-white sm:text-3xl">{t('admin.adminLicenses')}</h1>
+          <p className="mt-1 text-sm text-white/70">{t('admin.adminLicensesSubtitle')}</p>
         </div>
         <div className="flex gap-2">
           <button
             type="button"
             onClick={loadLicenses}
-            className="inline-flex items-center gap-2 rounded-lg border border-red-700 px-3 py-2 text-sm text-white/90"
+            className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm text-white/90"
           >
             <RefreshCw size={14} />
-            Refresh
+            {t('admin.refresh')}
           </button>
           <button
             type="button"
             onClick={openCreateModal}
-            className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white"
+            className="themeBtnAccent inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold"
           >
             <Plus size={14} />
-            Create License
+            {t('admin.createLicense')}
           </button>
         </div>
       </div>
 
-      <div className="rounded-xl border border-red-800 bg-card p-4">
+      <div className="rounded-xl themeCard p-4">
         <div className="mb-3 grid grid-cols-1 gap-3 md:grid-cols-3">
           <input
             value={q}
@@ -327,8 +358,8 @@ export default function AdminLicenses() {
               setPage(1);
               setQ(event.target.value);
             }}
-            placeholder="Search key or notes"
-            className="rounded-lg border border-red-800 bg-red-950 px-3 py-2 text-sm outline-none focus:border-red-500"
+            placeholder={t('admin.searchLicensePlaceholder')}
+            className="rounded-lg themeField px-3 py-2 text-sm outline-none"
           />
           <select
             value={status}
@@ -336,7 +367,7 @@ export default function AdminLicenses() {
               setPage(1);
               setStatus(event.target.value);
             }}
-            className="rounded-lg border border-red-800 bg-red-950 px-3 py-2 text-sm outline-none focus:border-red-500"
+            className="rounded-lg themeField px-3 py-2 text-sm outline-none"
           >
             <option value="all">all</option>
             <option value="active">active</option>
@@ -344,12 +375,12 @@ export default function AdminLicenses() {
             <option value="revoked">revoked</option>
           </select>
           <div className="flex items-center justify-end text-sm text-white/70">
-            Total: {total}
+            {t('admin.total')}: {total}
           </div>
         </div>
 
         {error ? (
-          <div className="mb-3 rounded-lg border border-red-700 bg-red-950/70 px-3 py-2 text-sm text-red-200">
+          <div className="mb-3 rounded-lg border border-[var(--border)] bg-red-950/70 px-3 py-2 text-sm text-red-200">
             {error}
           </div>
         ) : null}
@@ -357,25 +388,25 @@ export default function AdminLicenses() {
         <div className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">
             <thead>
-              <tr className="border-b border-red-900/70 text-white/75">
-                <th className="px-2 py-2 font-semibold">Key</th>
-                <th className="px-2 py-2 font-semibold">Max</th>
-                <th className="px-2 py-2 font-semibold">Expires At</th>
-                <th className="px-2 py-2 font-semibold">Status</th>
-                <th className="px-2 py-2 font-semibold">Created</th>
-                <th className="px-2 py-2 font-semibold">Actions</th>
+              <tr className="border-b border-[var(--border)] text-white/75">
+                <th className="px-2 py-2 font-semibold">{t('admin.key')}</th>
+                <th className="px-2 py-2 font-semibold">{t('admin.max')}</th>
+                <th className="px-2 py-2 font-semibold">{t('admin.expiresAt')}</th>
+                <th className="px-2 py-2 font-semibold">{t('admin.status')}</th>
+                <th className="px-2 py-2 font-semibold">{t('admin.created')}</th>
+                <th className="px-2 py-2 font-semibold">{t('admin.actions')}</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-2 py-6 text-center text-white/65">Loading licenses...</td>
+                  <td colSpan={6} className="px-2 py-6 text-center text-white/65">{t('admin.loadingLicenses')}</td>
                 </tr>
               ) : null}
 
               {!loading && items.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-2 py-6 text-center text-white/65">No licenses found.</td>
+                  <td colSpan={6} className="px-2 py-6 text-center text-white/65">{t('admin.noLicensesFound')}</td>
                 </tr>
               ) : null}
 
@@ -388,7 +419,7 @@ export default function AdminLicenses() {
                   const isRevoked = String(license.rawStatus || license.status) === "revoked";
 
                   return (
-                    <tr key={license._id} className="border-b border-red-900/40">
+                    <tr key={license._id} className="border-b border-[var(--border)]">
                       <td className="px-2 py-3 font-mono text-xs">
                         <div className="flex items-center gap-2">
                           <span>{displayKey}</span>
@@ -397,17 +428,17 @@ export default function AdminLicenses() {
                             onClick={() =>
                               setRevealById((prev) => ({ ...prev, [license._id]: !revealed }))
                             }
-                            className="rounded border border-red-700/80 px-2 py-1 text-[11px]"
+                            className="rounded border border-[var(--border)]/80 px-2 py-1 text-[11px]"
                           >
                             {revealed ? (
                               <span className="inline-flex items-center gap-1">
                                 <EyeOff size={12} />
-                                Hide
+                                {t('admin.hide')}
                               </span>
                             ) : (
                               <span className="inline-flex items-center gap-1">
                                 <Eye size={12} />
-                                Reveal
+                                {t('admin.reveal')}
                               </span>
                             )}
                           </button>
@@ -439,21 +470,21 @@ export default function AdminLicenses() {
                             className="inline-flex items-center gap-1 rounded border border-cyan-500/40 px-2 py-1 text-xs text-cyan-100 disabled:opacity-50"
                           >
                             <Copy size={12} />
-                            Copy
+                            {t('admin.copy')}
                           </button>
                           <button
                             type="button"
                             onClick={() => handleToggleStatus(license)}
-                            className="rounded border border-red-600/70 px-2 py-1 text-xs"
+                            className="rounded border border-[var(--border)] px-2 py-1 text-xs"
                           >
-                            {isRevoked ? "Activate" : "Revoke"}
+                            {isRevoked ? t('admin.activate') : t('admin.revoke')}
                           </button>
                           <button
                             type="button"
                             onClick={() => openEditModal(license)}
                             className="rounded border border-white/30 px-2 py-1 text-xs"
                           >
-                            Edit
+                            {t('admin.edit')}
                           </button>
                         </div>
                       </td>
@@ -466,24 +497,24 @@ export default function AdminLicenses() {
 
         <div className="mt-4 flex items-center justify-between gap-2">
           <div className="text-sm text-white/70">
-            Page {page} of {Math.max(1, pages)}
+            {t('logs.page')} {page} {t('logs.of')} {Math.max(1, pages)}
           </div>
           <div className="flex gap-2">
             <button
               type="button"
               disabled={page <= 1}
               onClick={() => setPage((value) => Math.max(1, value - 1))}
-              className="rounded border border-red-700 px-3 py-1 text-sm disabled:opacity-50"
+              className="rounded border border-[var(--border)] px-3 py-1 text-sm disabled:opacity-50"
             >
-              Prev
+              {t('logs.prev')}
             </button>
             <button
               type="button"
               disabled={page >= pages}
               onClick={() => setPage((value) => value + 1)}
-              className="rounded border border-red-700 px-3 py-1 text-sm disabled:opacity-50"
+              className="rounded border border-[var(--border)] px-3 py-1 text-sm disabled:opacity-50"
             >
-              Next
+              {t('logs.next')}
             </button>
           </div>
         </div>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../lib/api";
+import { useLanguage } from "../context/LanguageContext";
 import { formatDateTimeBDT } from "../utils/timeDisplay";
 
 const PAGE_LIMIT = 50;
@@ -102,6 +103,7 @@ function resolveDisplayKey(log) {
 
 export default function ActivityLogs() {
   const navigate = useNavigate();
+  const { t } = useLanguage();
 
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
@@ -112,6 +114,10 @@ export default function ActivityLogs() {
   const [level, setLevel] = useState("all");
   const [searchInput, setSearchInput] = useState("");
   const [appliedFilters, setAppliedFilters] = useState({ level: "all", q: "" });
+
+  // Analytics data from dedicated endpoints
+  const [sourceIps, setSourceIps] = useState({ data: [], uniqueCount: 0, flaggedCount: 0 });
+  const [affectedAccounts, setAffectedAccounts] = useState({ data: [], accountsTouched: 0, deletedCount: 0 });
 
   const [stats, setStats] = useState(EMPTY_STATS);
   const [loading, setLoading] = useState(false);
@@ -290,6 +296,23 @@ export default function ActivityLogs() {
     fetchLogs({ targetPage: page, filters: appliedFilters });
   }, [page, appliedFilters, fetchLogs]);
 
+  // Fetch analytics from dedicated endpoints
+  useEffect(() => {
+    const loadAnalytics = async () => {
+      try {
+        const [ipsRes, accountsRes] = await Promise.all([
+          api.get("/api/logs/source-ips"),
+          api.get("/api/logs/affected-accounts")
+        ]);
+        if (ipsRes?.data) setSourceIps(ipsRes.data);
+        if (accountsRes?.data) setAffectedAccounts(accountsRes.data);
+      } catch {
+        // silent — analytics are non-critical
+      }
+    };
+    loadAnalytics();
+  }, [appliedFilters]);
+
   useEffect(() => {
     if (!autoRefresh) {
       if (intervalRef.current) {
@@ -358,11 +381,11 @@ export default function ActivityLogs() {
   const showingTo = total === 0 ? 0 : Math.min(page * limit, total);
 
   const statCards = [
-    { label: "Total", value: stats.total, color: "#e2e8f0" },
-    { label: "Success", value: stats.success, color: "#0ecb81" },
-    { label: "Warning", value: stats.warning, color: "#f59e0b" },
-    { label: "Error", value: stats.error, color: "#f6465d" },
-    { label: "Info", value: stats.info, color: "#3b82f6" }
+    { label: t('logs.total'), value: stats.total, color: "#e2e8f0" },
+    { label: t('logs.success'), value: stats.success, color: "#0ecb81" },
+    { label: t('logs.warning'), value: stats.warning, color: "#f59e0b" },
+    { label: t('logs.error'), value: stats.error, color: "#f6465d" },
+    { label: t('logs.info'), value: stats.info, color: "#3b82f6" }
   ];
 
   const applyFilters = () => {
@@ -410,11 +433,11 @@ export default function ActivityLogs() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5" style={{ maxWidth: "1400px", margin: "0 auto", width: "100%" }}>
       <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-2xl sm:text-3xl font-bold">Activity History</h1>
-          <p className="text-sm opacity-70">Monitor recent account actions and system events.</p>
+          <h1 className="text-2xl sm:text-3xl font-bold">{t('logs.title')}</h1>
+          <p className="text-sm opacity-70">{t('logs.subtitle')}</p>
         </div>
 
         <button
@@ -422,134 +445,106 @@ export default function ActivityLogs() {
           onClick={() => navigate("/")}
           className="w-full sm:w-auto rounded-lg border themeBorder px-4 py-2 text-sm font-medium transition hover:bg-[#161b22]"
         >
-          Back to Dashboard
+          {t('logs.backToDashboard')}
         </button>
       </header>
 
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
         {statCards.map((card) => (
-          <article key={card.label} className="rounded-xl border themeBorder bg-card p-4">
-            <p className="text-sm opacity-70">{card.label}</p>
-            <p className="mt-2 text-2xl font-bold" style={{ color: card.color }}>
+          <article key={card.label} className="themeCard flex items-center justify-between p-4">
+            <p className="text-sm font-semibold uppercase tracking-wider opacity-70">{card.label}</p>
+            <p className="text-2xl font-bold" style={{ color: card.color }}>
               {card.value}
             </p>
           </article>
         ))}
       </section>
 
-      <section className="rounded-xl border themeBorder bg-card p-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-          <input
-            type="text"
-            placeholder="Search Activities"
-            value={searchInput}
-            onChange={(event) => {
-              setSearchInput(event.target.value);
-              pauseForTyping();
-            }}
-            className="w-full rounded-lg themeField px-3 py-2 text-sm outline-none placeholder:text-zinc-400"
-          />
-
-          <select
-            value={level}
-            onChange={(event) => {
-              setLevel(event.target.value);
-              pauseForTyping();
-            }}
-            className="w-full lg:w-auto min-w-[160px] rounded-lg themeField px-3 py-2 text-sm outline-none"
-          >
-            <option value="all">All Levels</option>
-            <option value="success">Success</option>
-            <option value="warning">Warning</option>
-            <option value="error">Error</option>
-            <option value="info">Info</option>
-          </select>
-
+      <div className="themeTabBar">
+        {[
+          { key: "all", label: t('logs.allLevels') },
+          { key: "success", label: t('logs.success') },
+          { key: "warning", label: t('logs.warning') },
+          { key: "error", label: t('logs.error') },
+          { key: "info", label: t('logs.info') }
+        ].map((tab) => (
           <button
+            key={tab.key}
             type="button"
-            onClick={applyFilters}
-            className="w-full lg:w-auto rounded-lg bg-accent px-4 py-2 text-sm font-medium"
-        >
-          Filter
-        </button>
-
-        <button
-          type="button"
-          onClick={clearFilters}
-          className="w-full lg:w-auto rounded-lg border themeBorder px-4 py-2 text-sm font-medium hover:bg-[#161b22]"
-        >
-          Clear
-        </button>
-
-        <label className="ml-0 flex items-center gap-2 text-sm lg:ml-auto">
-          <input
-            type="checkbox"
-            checked={autoRefresh}
-            onChange={(event) => setAutoRefresh(event.target.checked)}
-            className="h-4 w-4 rounded border themeBorder bg-[#0f1319]"
-            style={{ accentColor: "#f7a600" }}
-          />
-          <span>Auto refresh</span>
-        </label>
+            className={`themeTab ${level === tab.key ? "is-active" : ""}`}
+            onClick={() => {
+              setLevel(tab.key);
+              setPage(1);
+              setAppliedFilters((prev) => ({ ...prev, level: tab.key }));
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
-        {autoRefresh && (
-          <p className="mt-2 text-xs opacity-70">
-            {autoPaused ? "Paused while scrolling" : "Refreshing every 5s"}
-          </p>
-        )}
-      </section>
-
-      <section className="rounded-xl border themeBorder bg-card p-2 sm:p-4">
+      <section className="themeCard overflow-hidden">
         {error && (
-          <div className="mb-3 rounded-md border themeBorder px-3 py-2 text-sm" style={{ background: "rgba(246,70,93,0.1)", color: "#f6465d" }}>
+          <div className="m-4 rounded-md border border-red-700/50 bg-red-950/40 px-3 py-2 text-sm text-red-200">
             {error}
           </div>
         )}
 
         {loading && items.length === 0 && (
-          <div className="px-3 py-8 text-center text-sm opacity-70">Loading logs...</div>
+          <div className="px-3 py-8 text-center text-sm opacity-70">{t('logs.loadingLogs')}</div>
         )}
 
         {!loading && items.length === 0 && (
-          <div className="px-3 py-8 text-center text-sm opacity-70">No logs found for this filter.</div>
+          <div className="px-3 py-8 text-center text-sm opacity-70">{t('logs.noLogsFound')}</div>
         )}
 
         {items.length > 0 && (
-          <div className="divide-y" style={{ borderColor: "var(--border)" }}>
-            {items.map((log) => {
-              const displayKey = resolveDisplayKey(log);
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-[var(--border)]">
+                  <th className="px-4 py-3">{t('logs.time')}</th>
+                  <th className="px-4 py-3">{t('logs.level')}</th>
+                  <th className="px-4 py-3">{t('logs.message')}</th>
+                  <th className="px-4 py-3">{t('logs.email')}</th>
+                  <th className="px-4 py-3">{t('logs.ip')}</th>
+                  <th className="px-4 py-3">{t('logs.accountId')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((log) => {
+                  const displayKey = resolveDisplayKey(log);
 
-              return (
-                <article key={log._id} className="flex flex-col gap-2 px-3 py-4 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-                  <div className="min-w-0">
-                    <p className="font-semibold leading-6 break-words">{log.message || "-"}</p>
-                    <p className="mt-1 text-xs opacity-70">{formatDateTime(log.createdAt)}</p>
-
-                    {log.ip && (
-                      <p className="mt-1 text-xs opacity-70 break-words">{log.ip}</p>
-                    )}
-
-                    {displayKey && (
-                      <p className="mt-1 text-xs opacity-70 break-words">{displayKey}</p>
-                    )}
-                  </div>
-
-                  <span
-                    className="self-start rounded-full border px-2.5 py-1 text-xs font-semibold uppercase"
-                    style={levelBadgeStyle(log.level)}
-                  >
-                    {log.level || "info"}
-                  </span>
-                </article>
-              );
-            })}
+                  return (
+                    <tr key={log._id} className="border-b border-[var(--border)]">
+                      <td className="whitespace-nowrap px-4 py-3 text-sm mono opacity-80">
+                        {formatDateTime(log.createdAt)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span
+                          className="rounded-full border px-2.5 py-1 text-xs font-semibold"
+                          style={levelBadgeStyle(log.level)}
+                        >
+                          {log.level || "info"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm">{log.message || "-"}</td>
+                      <td className="px-4 py-3 text-sm opacity-80">{displayKey || "—"}</td>
+                      <td className="px-4 py-3 text-sm mono opacity-80">{log.ip || "—"}</td>
+                      <td className="px-4 py-3 text-sm mono opacity-60">
+                        {String(log.accountId || "").slice(0, 9) || "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
 
-        <div className="mt-4 flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between" style={{ borderColor: "var(--border)" }}>
+        <div className="flex flex-col gap-3 border-t border-[var(--border)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm opacity-70">
-            Showing {showingFrom} to {showingTo} of {total} results
+            {t('logs.page')} {page} {t('logs.of')} {Math.max(1, pages)} &middot; {total} {t('logs.entries')}
           </p>
 
           <div className="flex flex-wrap items-center gap-1">
@@ -559,7 +554,7 @@ export default function ActivityLogs() {
               disabled={page <= 1}
               className="rounded-md border themeBorder px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-40 hover:bg-[#161b22]"
             >
-              Prev
+              {t('logs.prev')}
             </button>
 
             {visiblePages.map((entry, index) => {
@@ -582,7 +577,7 @@ export default function ActivityLogs() {
                   className="rounded-md border px-3 py-1.5 text-sm"
                   style={
                     active
-                      ? { borderColor: "#f7a600", background: "rgba(247,166,0,0.18)", color: "#f7a600" }
+                      ? { borderColor: "var(--accent)", background: "rgba(245,166,35,0.18)", color: "var(--accent)" }
                       : { borderColor: "var(--border)" }
                   }
                 >
@@ -597,11 +592,158 @@ export default function ActivityLogs() {
               disabled={page >= totalPages}
               className="rounded-md border themeBorder px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-40 hover:bg-[#161b22]"
             >
-              Next
+              {t('logs.next')}
             </button>
           </div>
         </div>
       </section>
+
+      {/* Analytics three-column section */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* Level Breakdown */}
+        <div className="themeCard p-5">
+          <div className="mb-4 flex items-center gap-2">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--info)" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
+            <h3 className="font-semibold">{t('logs.levelBreakdown')}</h3>
+          </div>
+
+          <div className="space-y-3">
+            {[
+              { label: "Info", count: stats.info, color: "#3b82f6" },
+              { label: "Warning", count: stats.warning, color: "#eab308" },
+              { label: "Error", count: stats.error, color: "#ef4444" },
+              { label: "Success", count: stats.success, color: "#22c55e" }
+            ].map((row) => (
+              <div key={row.label}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm">{row.label}</span>
+                  <span className="text-sm font-semibold" style={{ color: row.color }}>{row.count}</span>
+                </div>
+                <div className="h-2 rounded-full" style={{ background: "var(--border)" }}>
+                  <div
+                    className="h-full rounded-full transition-all"
+                    style={{
+                      width: `${stats.total ? Math.max(2, (row.count / stats.total) * 100) : 0}%`,
+                      background: row.color
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 text-xs mono" style={{ color: "var(--muted)" }}>
+            Last log: {items.length > 0 ? formatDateTime(items[0]?.createdAt) : "—"}
+          </div>
+        </div>
+
+        {/* Source IPs */}
+        <div className="themeCard p-5">
+          <div className="mb-4 flex items-center gap-2">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <h3 className="font-semibold">{t('logs.sourceIps')}</h3>
+          </div>
+
+          <div className="space-y-2">
+            {sourceIps.data.length === 0 ? (
+              <div className="text-sm py-2" style={{ color: "var(--muted)" }}>{t('logs.noIpData')}</div>
+            ) : (
+              sourceIps.data.slice(0, 5).map((entry) => (
+                <div key={entry.ip} className="flex items-center justify-between rounded-lg border border-[var(--border)] p-3">
+                  <div>
+                    <div className="font-semibold text-sm mono">{entry.ip}</div>
+                    <div className="text-xs" style={{ color: "var(--muted)" }}>{entry.lastAction || t('logs.userAction')}</div>
+                  </div>
+                  <span className="rounded-full px-2.5 py-1 text-xs font-semibold" style={{ background: "rgba(59,130,246,0.15)", color: "#3b82f6" }}>
+                    {entry.eventCount} {t('logs.events')}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="mt-3 text-xs" style={{ color: "var(--muted)" }}>
+            {sourceIps.uniqueCount} {t('logs.uniqueIp')} &middot; {sourceIps.flaggedCount} {t('logs.flagged')}
+          </div>
+        </div>
+
+        {/* Affected Accounts */}
+        <div className="themeCard p-5">
+          <div className="mb-4 flex items-center gap-2">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <h3 className="font-semibold">{t('logs.affectedAccounts')}</h3>
+          </div>
+
+          <div className="space-y-2">
+            {affectedAccounts.data.length === 0 ? (
+              <div className="text-sm py-2" style={{ color: "var(--muted)" }}>{t('logs.noAccountData')}</div>
+            ) : (
+              affectedAccounts.data.slice(0, 5).map((entry) => (
+                <div key={entry.email} className="flex items-center justify-between rounded-lg border border-[var(--border)] p-3">
+                  <div className="min-w-0">
+                    <div className="font-semibold text-sm truncate">{entry.email}</div>
+                    <div className="text-xs" style={{ color: "var(--muted)" }}>{entry.count} {t('logs.logEntries')}</div>
+                  </div>
+                  {entry.deleted && (
+                    <span className="rounded-full px-2 py-0.5 text-xs font-semibold" style={{ background: "rgba(239,68,68,0.15)", color: "#ef4444" }}>
+                      {t('status.deleted')}
+                    </span>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="mt-3 space-y-1 text-xs" style={{ color: "var(--muted)" }}>
+            <div>{t('logs.accountsTouched')} <strong className="text-white">{affectedAccounts.accountsTouched}</strong></div>
+            {affectedAccounts.deletedCount > 0 && (
+              <div>{t('logs.deletedAccounts')} <strong className="text-red-400">{affectedAccounts.deletedCount}</strong></div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Log Export & Tools */}
+      <div className="themeCard p-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="font-semibold text-lg">{t('logs.exportTitle')}</h3>
+            <p className="text-sm" style={{ color: "var(--muted)" }}>{t('logs.exportSubtitle')}</p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              className="themeBtnTeal inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold"
+              onClick={() => window.open("/api/logs/export?format=csv", "_blank")}
+            >
+              {t('logs.exportCsv')}
+            </button>
+            <button
+              type="button"
+              className="themeBtnMuted inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold"
+              style={{ borderColor: "rgba(59,130,246,0.5)", color: "#3b82f6" }}
+              onClick={() => window.open("/api/logs/export?format=json", "_blank")}
+            >
+              {t('logs.exportJson')}
+            </button>
+            <button
+              type="button"
+              className="themeBtnDanger inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold"
+              onClick={() => {
+                if (window.confirm(t('logs.clearConfirm'))) {
+                  api.delete("/api/logs/clear").then(() => {
+                    setItems([]);
+                    setTotal(0);
+                    setStats(EMPTY_STATS);
+                  }).catch(() => {});
+                }
+              }}
+            >
+              {t('logs.clearLogs')}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -64,23 +64,6 @@ function parseMaybeJson(rawText) {
   }
 }
 
-function shouldSimulateFailure() {
-  if (!import.meta.env.DEV) return false;
-  if (typeof window === "undefined") return false;
-  if (!window.__SIMULATE_FAIL__) return false;
-  return Math.random() < 0.35;
-}
-
-async function maybeSimulateDelay() {
-  if (!import.meta.env.DEV) return;
-  if (typeof window === "undefined") return;
-
-  const delay = Number(window.__SIMULATE_DELAY_MS__ || 0);
-  if (!Number.isFinite(delay) || delay <= 0) return;
-
-  await sleep(delay);
-}
-
 function getMessageFromPayload(payload, fallback) {
   if (!payload) return fallback;
   if (typeof payload === "string") return payload;
@@ -178,18 +161,6 @@ export async function request(path, options = {}) {
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      if (shouldSimulateFailure()) {
-        throw createApiError({
-          message: "Simulated failure (window.__SIMULATE_FAIL__)",
-          status: 503,
-          payload: { message: "Simulated failure" },
-          type: "server",
-          retryable: true
-        });
-      }
-
-      await maybeSimulateDelay();
-
       const response = await fetch(resolveRequestUrl(path), {
         headers: {
           "Content-Type": "application/json",
@@ -326,6 +297,11 @@ export async function getTelegramSettings(options = {}) {
 
 export async function getAppSettings(options = {}) {
   const res = await api.get("/api/settings/app", options);
+  return res.data;
+}
+
+export async function detectTimezone(options = {}) {
+  const res = await api.get("/api/settings/detect-timezone", options);
   return res.data;
 }
 

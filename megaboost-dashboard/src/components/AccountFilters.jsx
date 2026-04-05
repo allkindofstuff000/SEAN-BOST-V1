@@ -5,7 +5,7 @@ export default function AccountFilters() {
   const [status, setStatus] = useState("all");
 
   return (
-    <div className="bg-card p-6 rounded-xl border border-red-800 mb-6">
+    <div className="themeCard p-6 rounded-xl mb-6">
       
       <div className="grid grid-cols-3 gap-6 items-end">
 
@@ -14,7 +14,7 @@ export default function AccountFilters() {
           <label className="block text-sm mb-2 opacity-70">
             Search Accounts
           </label>
-          <div className="flex items-center bg-red-950 rounded-lg px-3 py-2">
+          <div className="flex items-center bg-[var(--field)] rounded-lg px-3 py-2">
             <Search size={16} className="opacity-50 mr-2" />
             <input
               type="text"
@@ -32,7 +32,7 @@ export default function AccountFilters() {
           <select
             value={status}
             onChange={(e) => setStatus(e.target.value)}
-            className="w-full bg-red-950 px-3 py-2 rounded-lg text-sm outline-none"
+            className="w-full bg-[var(--field)] px-3 py-2 rounded-lg text-sm outline-none"
           >
             <option value="all">All Statuses</option>
             <option value="running">Running</option>

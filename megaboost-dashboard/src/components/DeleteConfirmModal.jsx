@@ -5,7 +5,7 @@ export default function DeleteConfirmModal({ account, pending = false, onConfirm
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50">
-      <div className="bg-card w-96 p-6 rounded-xl border border-red-800 shadow-xl">
+      <div className="themeCard w-96 p-6 rounded-xl">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-lg font-semibold flex items-center gap-2 text-red-400">
             <AlertTriangle size={18} />

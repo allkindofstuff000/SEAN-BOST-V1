@@ -2,14 +2,18 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   CheckCircle2,
-  FileText,
+  ClipboardList,
+  Globe,
   Send,
   Settings as SettingsIcon,
-  User
+  Timer,
+  User,
+  Bell
 } from "lucide-react";
 import { useAccounts } from "../context/AccountsContext";
 import { useAuth } from "../context/AuthContext";
-import { getAppSettings, getTelegramSettings } from "../lib/api";
+import { useLanguage } from "../context/LanguageContext";
+import { getAppSettings, getTelegramSettings, updateAppSettings, detectTimezone } from "../lib/api";
 import TelegramConfigModal from "../components/TelegramConfigModal";
 import {
   DEFAULT_TIMEZONE,
@@ -18,10 +22,19 @@ import {
   formatDateTimeBDT
 } from "../utils/timeDisplay";
 
+const TIMEZONE_OPTIONS = [
+  { value: "America/New_York", label: "New York (EST/EDT, UTC-5)", flag: "\ud83c\uddfa\ud83c\uddf8" },
+  { value: "America/Chicago", label: "Texas / Chicago (CST/CDT, UTC-6)", flag: "\ud83c\uddfa\ud83c\uddf8" },
+  { value: "America/Santo_Domingo", label: "Dominican Republic (AST, UTC-4)", flag: "\ud83c\udde9\ud83c\uddf4" },
+  { value: "Asia/Dhaka", label: "Dhaka (BDT, UTC+6)", flag: "\ud83c\udde7\ud83c\udde9" },
+  { value: "UTC", label: "Universal Time (UTC+0)", flag: "\ud83c\udf10" }
+];
+
 export default function Settings() {
   const navigate = useNavigate();
   const { showToast } = useAccounts();
   const { user, loading: authLoading } = useAuth();
+  const { t } = useLanguage();
 
   const [telegramSettings, setTelegramSettings] = useState({
     enabled: false,
@@ -31,16 +44,22 @@ export default function Settings() {
   const [loadingTelegram, setLoadingTelegram] = useState(true);
   const [telegramError, setTelegramError] = useState("");
   const [isTelegramModalOpen, setIsTelegramModalOpen] = useState(false);
-  const [appSettings, setAppSettings] = useState({
-    timezone: DEFAULT_TIMEZONE,
-    timezoneLabel: DEFAULT_TIMEZONE_LABEL,
-    uiTimeFormat: DEFAULT_UI_TIME_FORMAT
-  });
+
+  // Automation defaults — controlled state
+  const [interval, setInterval_] = useState(30);
+  const [timezone, setTimezone] = useState(DEFAULT_TIMEZONE);
+  const [timezoneLabel, setTimezoneLabel] = useState(DEFAULT_TIMEZONE_LABEL);
+  const [autoRestart, setAutoRestart] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveResult, setSaveResult] = useState(null);
+
+  // Timezone detection
+  const [detectedTz, setDetectedTz] = useState(null);
+  const [detectingTz, setDetectingTz] = useState(true);
 
   const loadTelegramSettings = useCallback(async () => {
     setLoadingTelegram(true);
     setTelegramError("");
-
     try {
       const settings = await getTelegramSettings();
       setTelegramSettings({
@@ -50,35 +69,45 @@ export default function Settings() {
       });
     } catch (error) {
       setTelegramError(
-        error?.response?.data?.message ||
-          error?.message ||
-          "Failed to load Telegram settings"
+        error?.response?.data?.message || error?.message || "Failed to load Telegram settings"
       );
     } finally {
       setLoadingTelegram(false);
     }
   }, []);
 
-  useEffect(() => {
-    loadTelegramSettings();
-  }, [loadTelegramSettings]);
+  useEffect(() => { loadTelegramSettings(); }, [loadTelegramSettings]);
 
+  // Load app settings + detect timezone
   useEffect(() => {
-    getAppSettings()
-      .then((settings) => {
-        setAppSettings({
-          timezone: String(settings?.timezone || DEFAULT_TIMEZONE),
-          timezoneLabel: String(settings?.timezoneLabel || DEFAULT_TIMEZONE_LABEL),
-          uiTimeFormat: String(settings?.uiTimeFormat || DEFAULT_UI_TIME_FORMAT)
-        });
-      })
-      .catch(() => {
-        setAppSettings({
-          timezone: DEFAULT_TIMEZONE,
-          timezoneLabel: DEFAULT_TIMEZONE_LABEL,
-          uiTimeFormat: DEFAULT_UI_TIME_FORMAT
-        });
-      });
+    const loadSettings = async () => {
+      try {
+        const settings = await getAppSettings();
+        const tz = String(settings?.timezone || DEFAULT_TIMEZONE);
+        setTimezone(tz);
+        setTimezoneLabel(String(settings?.timezoneLabel || DEFAULT_TIMEZONE_LABEL));
+        setInterval_(Number(settings?.baseInterval) || 30);
+      } catch {
+        // keep defaults
+      }
+    };
+
+    const detect = async () => {
+      setDetectingTz(true);
+      try {
+        const result = await detectTimezone();
+        if (result?.detected) {
+          setDetectedTz(result);
+        }
+      } catch {
+        // detection failed silently
+      } finally {
+        setDetectingTz(false);
+      }
+    };
+
+    loadSettings();
+    detect();
   }, []);
 
   const isConfigured = useMemo(
@@ -89,173 +118,236 @@ export default function Settings() {
   const accountOverview = useMemo(
     () => ({
       username: authLoading ? "Loading..." : user?.username || "Unknown",
-      userId: authLoading ? "Loading..." : String(user?._id || "Unknown"),
+      userId: authLoading ? "Loading..." : String(user?._id || "Unknown").slice(0, 12) + "...",
       accountType: authLoading ? "Loading..." : formatRoleLabel(user?.role),
       memberSince: authLoading ? "Loading..." : formatMemberSince(user?.createdAt)
     }),
     [authLoading, user]
   );
 
+  // Build dropdown options with auto-detected first
+  const timezoneOptions = useMemo(() => {
+    const options = [];
+
+    if (detectedTz?.detected) {
+      const alreadyInList = TIMEZONE_OPTIONS.some((opt) => opt.value === detectedTz.timezone);
+      if (!alreadyInList) {
+        options.push({
+          value: detectedTz.timezone,
+          label: `${detectedTz.label} (detected)`,
+          flag: "\ud83c\udf10"
+        });
+      }
+    }
+
+    TIMEZONE_OPTIONS.forEach((opt) => {
+      const isDetected = detectedTz?.detected && detectedTz.timezone === opt.value;
+      options.push({
+        ...opt,
+        label: isDetected ? `${opt.label} (detected)` : opt.label
+      });
+    });
+
+    return options;
+  }, [detectedTz]);
+
+  const handleTimezoneChange = (value) => {
+    setTimezone(value);
+    const matched = TIMEZONE_OPTIONS.find((opt) => opt.value === value);
+    setTimezoneLabel(matched ? matched.label.replace(" (detected)", "") : value);
+  };
+
+  const handleSaveDefaults = async () => {
+    if (saving) return;
+    setSaving(true);
+    setSaveResult(null);
+
+    try {
+      const result = await updateAppSettings({
+        timezone,
+        timezoneLabel,
+        baseInterval: interval,
+        autoRestart
+      });
+
+      const accountsUpdated = result?.accounts_updated || 0;
+      const msg = accountsUpdated > 0
+        ? `Settings saved. Timezone applied to ${accountsUpdated} accounts.`
+        : "Settings saved.";
+      showToast?.(msg, "success");
+      setSaveResult({ accountsUpdated, time: new Date().toLocaleString() });
+    } catch (error) {
+      showToast?.(error?.message || "Failed to save settings", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <div>
-      <h1 className="mb-8 flex items-center gap-2 text-2xl font-bold sm:text-3xl">
+    <div className="pageShell" style={{ maxWidth: "900px", margin: "0 auto", width: "100%" }}>
+      <h1 className="mb-2 flex items-center gap-2 text-2xl font-bold sm:text-3xl">
         <SettingsIcon size={28} />
-        Settings
+        {t('settings.title')}
       </h1>
 
-      <div className="mb-8 grid grid-cols-1 gap-6 md:grid-cols-2">
-        <div className="rounded-xl border border-red-800 bg-card p-6">
+      {/* Account + Telegram side by side */}
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+        <div className="themeCard p-5">
           <div className="mb-4 flex items-center gap-2">
             <User size={20} />
-            <h2 className="text-lg font-semibold">Account</h2>
+            <h2 className="text-lg font-semibold">{t('settings.account')}</h2>
           </div>
-
-          <p className="mb-4 text-sm opacity-70">
-            Change username and password
-          </p>
-
-          <button className="w-full rounded-lg bg-accent px-4 py-2 text-sm font-medium transition hover:scale-105 sm:w-auto">
-            Manage Account
+          <p className="mb-4 text-sm opacity-70">{t('settings.changeCredentials')}</p>
+          <button className="themeBtnAccent rounded-lg px-4 py-2 text-sm font-medium sm:w-auto">
+            {t('settings.manageAccount')}
           </button>
         </div>
 
-        <div className="rounded-xl border border-red-800 bg-card p-6">
+        <div className="themeCard p-5">
           <div className="mb-4 flex items-center gap-2">
-            <SettingsIcon size={20} />
-            <h2 className="text-lg font-semibold">Timing System</h2>
+            <Send size={20} />
+            <h2 className="text-lg font-semibold">{t('settings.telegramNotifications')}</h2>
           </div>
-
-          <div className="space-y-1 text-sm opacity-80">
-            <div>Timezone: {appSettings.timezoneLabel}</div>
-            <div>IANA Zone: {appSettings.timezone}</div>
-            <div>UI Time Format: {appSettings.uiTimeFormat === "24h" ? "24-hour" : "12-hour AM/PM"}</div>
+          <div className="mb-3 flex items-center justify-between">
+            <span className="text-sm">{t('settings.enableTelegram')}</span>
+            <TogglePill active={telegramSettings.enabled} />
           </div>
-        </div>
-
-        <div className="rounded-xl border border-red-800 bg-card p-6">
-          <div className="mb-4 flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2">
-              <Send size={20} />
-              <h2 className="text-lg font-semibold">Telegram</h2>
-            </div>
-            {isConfigured ? (
-              <span className="inline-flex items-center gap-1 rounded-full border border-green-500/50 bg-green-900/30 px-2 py-0.5 text-xs font-semibold text-green-300">
-                <CheckCircle2 size={12} />
-                Configured
-              </span>
-            ) : null}
-          </div>
-
-          <p className="mb-2 text-sm opacity-70">
-            Configure bot token and chat ID
-          </p>
-
           {loadingTelegram ? (
-            <p className="mb-4 text-xs opacity-60">Loading Telegram settings...</p>
+            <p className="mb-4 text-xs opacity-60">Loading...</p>
           ) : (
-            <div className="mb-4 space-y-1 text-xs opacity-80">
-              <div>Chat ID: {telegramSettings.chatId || "Not set"}</div>
-              <div>Token: {telegramSettings.tokenMasked || "Not configured"}</div>
-              <div>Status: {telegramSettings.enabled ? "Enabled" : "Disabled"}</div>
+            <div className="mb-4 space-y-1 text-sm opacity-80">
+              <div>Bot Token: {telegramSettings.tokenMasked || t('settings.notConfigured')}</div>
+              <div>Chat ID: <strong>{telegramSettings.chatId || t('settings.notConfigured')}</strong></div>
             </div>
           )}
-
           {telegramError ? (
-            <p className="mb-4 rounded-md border border-red-700 bg-red-950/70 px-3 py-2 text-xs text-red-200">
+            <p className="mb-4 rounded-md border border-red-500/40 bg-red-950/30 px-3 py-2 text-xs text-red-300">
               {telegramError}
             </p>
           ) : null}
-
           <button
             type="button"
             onClick={() => setIsTelegramModalOpen(true)}
-            className="w-full rounded-lg bg-accent px-4 py-2 text-sm font-medium transition hover:scale-105 sm:w-auto"
+            className="themeBtnAccent w-full rounded-lg px-4 py-2 text-sm font-medium"
           >
-            Configure Telegram
+            {t('settings.configureTelegram')}
           </button>
         </div>
       </div>
 
-      <div className="mb-8 rounded-xl border border-red-800 bg-card p-6">
-        <h2 className="mb-6 text-lg font-semibold">
-          Quick Overview
-        </h2>
-
-        <div className="grid grid-cols-1 gap-8 text-sm lg:grid-cols-2 lg:gap-12">
-          <div>
-            <h3 className="mb-4 font-semibold">
-              Account Information
-            </h3>
-
-            <InfoRow label="Username:" value={accountOverview.username} />
-            <InfoRow label="User ID:" value={accountOverview.userId} />
-            <InfoRow label="Account Type:" value={accountOverview.accountType} />
-            <InfoRow label="Member Since:" value={accountOverview.memberSince} />
-          </div>
-
-          <div>
-            <h3 className="mb-4 font-semibold">
-              Telegram Status
-            </h3>
-
-            <StatusRow
-              label="Telegram Bot:"
-              value={telegramSettings.enabled ? "Configured" : "Not Configured"}
-              success={telegramSettings.enabled}
-            />
-            <StatusRow
-              label="Chat ID:"
-              value={telegramSettings.chatId ? "Set" : "Not Set"}
-              success={Boolean(telegramSettings.chatId)}
-            />
-            <InfoRow
-              label="Token:"
-              value={telegramSettings.tokenMasked || "Not configured"}
-            />
-          </div>
+      {/* Account Overview */}
+      <div className="themeCard p-5">
+        <div className="mb-4 flex items-center gap-2">
+          <ClipboardList size={20} />
+          <h2 className="text-lg font-semibold">{t('settings.accountOverview')}</h2>
+        </div>
+        <div className="grid grid-cols-2 gap-6 text-sm sm:grid-cols-4">
+          <OverviewItem label={t('settings.username')} value={accountOverview.username} />
+          <OverviewItem label={t('settings.userId')} value={accountOverview.userId} mono />
+          <OverviewItem label={t('settings.accountType')} value={accountOverview.accountType} />
+          <OverviewItem label={t('settings.memberSince')} value={accountOverview.memberSince} mono />
         </div>
       </div>
 
-      <div className="rounded-xl border border-red-800 bg-card p-6">
-        <h2 className="mb-6 text-lg font-semibold">
-          Additional Settings
-        </h2>
+      {/* Automation Defaults */}
+      <div className="themeCard p-5">
+        <div className="mb-4 flex items-center gap-2">
+          <Timer size={20} />
+          <h2 className="text-lg font-semibold">{t('settings.automationDefaults')}</h2>
+        </div>
 
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-          <div className="rounded-lg border border-red-800 bg-red-950 p-6">
-            <h3 className="mb-3 font-semibold">
-              Bumping Settings
-            </h3>
-
-            <p className="mb-4 text-sm opacity-70">
-              Configure bumping intervals and runtime
-            </p>
-
-            <button
-              onClick={() => navigate("/accounts/bumping")}
-              className="w-full rounded-lg bg-accent px-4 py-2 text-sm font-medium transition hover:scale-105 sm:w-auto"
-            >
-              Open Bumping Settings
-            </button>
+        <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
+          <div>
+            <label className="mb-2 block text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--muted)" }}>
+              {t('settings.defaultBaseInterval')}
+            </label>
+            <input
+              type="number"
+              min={1}
+              value={interval}
+              onChange={(e) => setInterval_(Math.max(1, Number(e.target.value) || 1))}
+              className="themeField w-full rounded-lg px-3 py-2 text-sm"
+            />
           </div>
 
-          <div className="rounded-lg border border-red-800 bg-red-950 p-6">
-            <h3 className="mb-3 flex items-center gap-2 font-semibold">
-              <FileText size={18} />
-              Activity Logs
-            </h3>
-
-            <p className="mb-4 text-sm opacity-70">
-              View full account activity history
-            </p>
-
-            <button
-              onClick={() => navigate("/activity")}
-              className="w-full rounded-lg bg-accent px-4 py-2 text-sm font-medium transition hover:scale-105 sm:w-auto"
+          <div>
+            <label className="mb-2 block text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--muted)" }}>
+              {t('settings.timezone')}
+            </label>
+            <select
+              value={timezone}
+              onChange={(e) => handleTimezoneChange(e.target.value)}
+              className="themeField w-full rounded-lg px-3 py-2 text-sm"
             >
-              View Activity History
-            </button>
+              {timezoneOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.flag} {opt.label}
+                </option>
+              ))}
+            </select>
+            {detectedTz?.detected && !detectingTz ? (
+              <div className="mt-1.5 flex items-center gap-1 text-xs" style={{ color: "var(--muted)" }}>
+                <Globe size={12} />
+                {t('settings.autoDetected', { location: `${detectedTz.city || detectedTz.label}${detectedTz.country ? `, ${detectedTz.country}` : ""}` })}
+              </div>
+            ) : detectingTz ? (
+              <div className="mt-1.5 text-xs" style={{ color: "var(--muted)" }}>{t('settings.detectingTimezone')}</div>
+            ) : (
+              <div className="mt-1.5 text-xs" style={{ color: "var(--muted)" }}>{t('settings.couldNotDetectTimezone')}</div>
+            )}
           </div>
+
+          <div>
+            <label className="mb-2 block text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--muted)" }}>
+              {t('settings.autoRestartCrashed')}
+            </label>
+            <select
+              value={autoRestart ? "enabled" : "disabled"}
+              onChange={(e) => setAutoRestart(e.target.value === "enabled")}
+              className="themeField w-full rounded-lg px-3 py-2 text-sm"
+            >
+              <option value="enabled">{t('settings.enabledDefault')}</option>
+              <option value="disabled">{t('settings.disabled')}</option>
+            </select>
+          </div>
+        </div>
+
+        <p className="mt-2 text-xs" style={{ color: "var(--subtle)" }}>{t('settings.appliedToNewAccounts')}</p>
+
+        <div className="mt-4 flex items-center justify-end gap-3">
+          <button
+            type="button"
+            onClick={handleSaveDefaults}
+            disabled={saving}
+            className="themeBtnAccent rounded-lg px-6 py-2 text-sm font-medium disabled:opacity-60"
+          >
+            {saving ? t('settings.saving') : t('settings.saveDefaults')}
+          </button>
+        </div>
+
+        {saveResult ? (
+          <div className="mt-3 flex items-center gap-2 text-xs" style={{ color: "var(--success)" }}>
+            <CheckCircle2 size={14} />
+            {t('settings.settingsSaved')}
+            {saveResult.accountsUpdated > 0
+              ? ` \u00b7 Timezone applied to ${saveResult.accountsUpdated} accounts`
+              : ""}
+            {` \u00b7 ${saveResult.time}`}
+          </div>
+        ) : null}
+      </div>
+
+      {/* Notification Events */}
+      <div className="themeCard p-5">
+        <div className="mb-4 flex items-center gap-2">
+          <Bell size={20} />
+          <h2 className="text-lg font-semibold">{t('settings.notificationEvents')}</h2>
+        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <NotificationToggle label={t('settings.notifAccountCrashed')} defaultOn />
+          <NotificationToggle label={t('settings.notifBumpExecuted')} />
+          <NotificationToggle label={t('settings.notifAccountBanned')} defaultOn />
+          <NotificationToggle label={t('settings.notifLicenseExpiring')} defaultOn />
         </div>
       </div>
 
@@ -288,22 +380,34 @@ function formatMemberSince(dateValue) {
   return formatDateTimeBDT(dateValue, {}, { fallback: "Unknown", includeSeconds: false });
 }
 
-function InfoRow({ label, value }) {
+function OverviewItem({ label, value, mono }) {
   return (
-    <div className="mb-2 flex justify-between gap-4">
-      <span className="opacity-70">{label}</span>
-      <span className="text-right font-medium">{value}</span>
+    <div>
+      <div className="mb-1 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--subtle)" }}>{label}</div>
+      <div className={`font-medium ${mono ? "mono text-sm" : ""}`}>{value}</div>
     </div>
   );
 }
 
-function StatusRow({ label, value, success }) {
+function TogglePill({ active }) {
   return (
-    <div className="mb-2 flex justify-between gap-4">
-      <span className="opacity-70">{label}</span>
-      <span className={`text-right font-medium ${success ? "text-green-400" : "text-red-300"}`}>
-        {success ? "OK" : "-"} {value}
-      </span>
+    <div className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${active ? "bg-[var(--accent)]" : "bg-gray-600"}`}>
+      <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${active ? "translate-x-6" : "translate-x-1"}`} />
+    </div>
+  );
+}
+
+function NotificationToggle({ label, defaultOn = false }) {
+  const [on, setOn] = useState(defaultOn);
+
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-[var(--border)] p-3">
+      <span className="text-sm">{label}</span>
+      <button type="button" onClick={() => setOn((prev) => !prev)}>
+        <div className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${on ? "bg-[var(--accent)]" : "bg-gray-600"}`}>
+          <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${on ? "translate-x-6" : "translate-x-1"}`} />
+        </div>
+      </button>
     </div>
   );
 }

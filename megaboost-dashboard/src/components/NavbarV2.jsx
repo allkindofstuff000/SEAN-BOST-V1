@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { useAccounts } from "../context/AccountsContext";
+import { useLanguage } from "../context/LanguageContext";
 import "./NavbarV2.css";
 
 function formatExpiry(dateValue) {
@@ -65,6 +66,21 @@ function getLicensePresentation(licenseInfo, isAdmin) {
   };
 }
 
+/* Orange pulse/waveform SVG icon */
+function PulseIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" className="pulseIcon">
+      <path
+        d="M2 12h3l2-6 3 12 3-8 2 4h3l2-4"
+        stroke="#f5a623"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export default function NavbarV2() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -73,6 +89,7 @@ export default function NavbarV2() {
   const [loggingOut, setLoggingOut] = useState(false);
   const { user, isAdmin, logout } = useAuth();
   const { licenseInfo, showToast } = useAccounts();
+  const { t, lang, setLang } = useLanguage();
 
   const license = useMemo(
     () => getLicensePresentation(licenseInfo, isAdmin),
@@ -137,36 +154,37 @@ export default function NavbarV2() {
     <header ref={wrapperRef} className="navbarNeon">
       <div className="navInner">
         <div className="navLeft">
-          <Link to="/" className="brandWrap brandGlow" onClick={closeMobileMenu}>
-            <span className="brandText brandTextFull">MEGABOOSTV1</span>
+          <Link to="/" className="brandWrap" onClick={closeMobileMenu}>
+            <PulseIcon />
+            <span className="brandText brandTextFull">SEANBOOST</span>
             <span className="brandText brandTextShort">MB1</span>
           </Link>
 
           <nav className="navDesktop text-sm font-medium items-center">
             <Link to="/" className={linkStyle("/")}>
-              <LayoutDashboard size={18} />
-              Dashboard
+              <LayoutDashboard size={16} />
+              {t('nav.dashboard')}
             </Link>
 
             <Link to="/accounts/list" className={linkStyle("/accounts")}>
-              <Users size={18} />
-              Accounts
+              <Users size={16} />
+              {t('nav.accounts')}
             </Link>
 
             <Link to="/settings" className={linkStyle("/settings")}>
-              <Settings size={18} />
-              Settings
+              <Settings size={16} />
+              {t('nav.settings')}
             </Link>
 
             <Link to="/activity" className={linkStyle("/activity")}>
-              <FileText size={18} />
-              Activity Logs
+              <FileText size={16} />
+              {t('nav.activityLogs')}
             </Link>
 
             {isAdmin ? (
               <Link to="/admin" className={linkStyle("/admin")}>
-                <Shield size={18} />
-                Admin
+                <Shield size={16} />
+                {t('nav.admin')}
               </Link>
             ) : null}
           </nav>
@@ -174,15 +192,21 @@ export default function NavbarV2() {
 
         <div className="navRight">
           <div className="navDesktopPills flex items-center gap-4 text-sm">
+            <div className="langToggle flex items-center gap-1 text-sm">
+              <button type="button" onClick={() => setLang("en")} className={`langBtn ${lang === "en" ? "langActive" : ""}`}>EN</button>
+              <span style={{ color: "var(--subtle)" }}>|</span>
+              <button type="button" onClick={() => setLang("es")} className={`langBtn ${lang === "es" ? "langActive" : ""}`}>ES</button>
+            </div>
+
             <div className={`licensePill ${license.className} flex items-center gap-2 px-3 py-1 rounded-full`}>
-              <KeyRound size={16} />
+              <KeyRound size={14} />
               {license.label}
             </div>
 
-            <div className="opacity-80">Expires: {license.expires}</div>
+            <span className="text-sm" style={{ color: "var(--muted)" }}>{t('dashboard.expires')}: {license.expires}</span>
 
             <div className="userPill flex items-center gap-2 px-3 py-1 rounded-full">
-              <UserCircle size={18} />
+              <UserCircle size={16} />
               {user?.username || "User"}
             </div>
 
@@ -192,8 +216,8 @@ export default function NavbarV2() {
               onClick={handleLogout}
               disabled={loggingOut}
             >
-              <LogOut size={15} />
-              {loggingOut ? "Logging out..." : "Logout"}
+              <LogOut size={14} />
+              {loggingOut ? t('nav.loggingOut') : t('nav.logout')}
             </button>
           </div>
 
@@ -217,39 +241,45 @@ export default function NavbarV2() {
         <nav className="mobileNavList">
           <Link to="/" className={linkStyle("/")} onClick={closeMobileMenu}>
             <LayoutDashboard size={18} />
-            Dashboard
+            {t('nav.dashboard')}
           </Link>
 
           <Link to="/accounts/list" className={linkStyle("/accounts")} onClick={closeMobileMenu}>
             <Users size={18} />
-            Accounts
+            {t('nav.accounts')}
           </Link>
 
           <Link to="/settings" className={linkStyle("/settings")} onClick={closeMobileMenu}>
             <Settings size={18} />
-            Settings
+            {t('nav.settings')}
           </Link>
 
           <Link to="/activity" className={linkStyle("/activity")} onClick={closeMobileMenu}>
             <FileText size={18} />
-            Activity Logs
+            {t('nav.activityLogs')}
           </Link>
 
           {isAdmin ? (
             <Link to="/admin" className={linkStyle("/admin")} onClick={closeMobileMenu}>
               <Shield size={18} />
-              Admin
+              {t('nav.admin')}
             </Link>
           ) : null}
         </nav>
 
         <div className="mobileMeta">
+          <div className="langToggle flex items-center gap-1 text-sm">
+            <button type="button" onClick={() => setLang("en")} className={`langBtn ${lang === "en" ? "langActive" : ""}`}>EN</button>
+            <span style={{ color: "var(--subtle)" }}>|</span>
+            <button type="button" onClick={() => setLang("es")} className={`langBtn ${lang === "es" ? "langActive" : ""}`}>ES</button>
+          </div>
+
           <div className={`licensePill ${license.className} flex items-center gap-2 px-3 py-2 rounded-full w-fit`}>
             <KeyRound size={16} />
             {license.label}
           </div>
 
-          <div className="text-sm opacity-80">Expires: {license.expires}</div>
+          <div className="text-sm" style={{ color: "var(--muted)" }}>{t('dashboard.expires')}: {license.expires}</div>
 
           <div className="userPill flex items-center gap-2 px-3 py-2 rounded-full w-fit">
             <UserCircle size={18} />
@@ -263,7 +293,7 @@ export default function NavbarV2() {
             disabled={loggingOut}
           >
             <LogOut size={15} />
-            {loggingOut ? "Logging out..." : "Logout"}
+            {loggingOut ? t('nav.loggingOut') : t('nav.logout')}
           </button>
         </div>
       </div>

@@ -36,6 +36,11 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
       index: true
+    },
+    language: {
+      type: String,
+      enum: ["en", "es"],
+      default: "en"
     }
   },
   {

@@ -1,8 +1,11 @@
 .dashboardPage {
   display: flex;
   flex-direction: column;
-  gap: 1.2rem;
+  gap: 24px;
   min-width: 0;
+  max-width: 1400px;
+  margin: 0 auto;
+  width: 100%;
 }
 
 .dashboardHeader {
@@ -23,14 +26,13 @@
 }
 
 .dashboardCard {
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border: 1px solid var(--border-card);
+  border-radius: 12px;
   background: var(--card);
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22);
 }
 
 .licenseCard {
-  padding: 1.4rem 1.6rem;
+  padding: 20px;
   display: flex;
   justify-content: space-between;
   gap: 1rem;
@@ -63,9 +65,9 @@
 .licenseActiveBadge {
   font-size: 0.75rem;
   font-weight: 700;
-  color: #0ecb81;
-  background: rgba(14, 203, 129, 0.15);
-  border: 1px solid rgba(14, 203, 129, 0.35);
+  color: var(--success);
+  background: rgba(34, 197, 94, 0.15);
+  border: 1px solid rgba(34, 197, 94, 0.35);
   padding: 0.22rem 0.62rem;
   border-radius: 999px;
 }
@@ -73,9 +75,9 @@
 .licenseDangerBadge {
   font-size: 0.75rem;
   font-weight: 700;
-  color: #f6465d;
-  background: rgba(246, 70, 93, 0.15);
-  border: 1px solid rgba(246, 70, 93, 0.35);
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.35);
   padding: 0.22rem 0.62rem;
   border-radius: 999px;
 }
@@ -83,9 +85,9 @@
 .licenseWarningBadge {
   font-size: 0.75rem;
   font-weight: 700;
-  color: #f59e0b;
-  background: rgba(245, 158, 11, 0.15);
-  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: var(--warning);
+  background: rgba(234, 179, 8, 0.15);
+  border: 1px solid rgba(234, 179, 8, 0.35);
   padding: 0.22rem 0.62rem;
   border-radius: 999px;
 }
@@ -95,61 +97,34 @@
   color: var(--muted);
 }
 
-.licenseRight {
-  width: min(280px, 100%);
-  display: flex;
-  flex-direction: column;
-  gap: 0.42rem;
-}
-
-.usageTopRow {
-  display: flex;
-  justify-content: space-between;
+.licenseKeyRow {
+  margin-top: 0.5rem;
   font-size: 0.84rem;
   color: var(--muted);
+  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
 }
 
-.usageTopRow strong {
+.licenseKeyRow strong {
   color: var(--text);
-  font-size: 1.05rem;
 }
 
-.usageProgress {
-  width: 100%;
-  height: 8px;
-  border-radius: 999px;
-  overflow: hidden;
-  background: rgba(255, 255, 255, 0.08);
+.licenseActions {
+  display: flex;
+  gap: 0.6rem;
+  flex-shrink: 0;
 }
 
-.usageProgressFill {
-  height: 100%;
-  background: linear-gradient(90deg, #fbd36a, #f7a600);
-  border-radius: 999px;
-  transition: width 0.2s ease;
-}
-
-.usagePercentText {
-  font-size: 0.76rem;
-  color: var(--muted);
-  text-align: right;
+.licenseActionBtn {
+  padding: 0.5rem 1.1rem;
+  font-size: 0.84rem;
+  white-space: nowrap;
 }
 
 .dashboardStatsGrid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.9rem;
-}
-
-.dashboardMidGrid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1rem;
-}
-
-.dashboardMidGrid .dashboardCard,
-.recentAccountsCard {
-  padding: 0;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 12px;
+  width: 100%;
 }
 
 .sectionHeader {
@@ -165,128 +140,8 @@
   font-weight: 700;
 }
 
-.inlineLink {
-  color: #f7a600;
-  font-size: 0.82rem;
-  font-weight: 600;
-  transition: color 0.18s ease;
-}
-
-.inlineLink:hover {
-  color: #ffce5a;
-}
-
-.activityList {
-  padding: 0.7rem 1rem 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  min-height: 280px;
-}
-
-.mutedLine {
-  color: var(--muted);
-  font-size: 0.84rem;
-  padding: 0.6rem 0;
-}
-
-.activityItem {
-  display: flex;
-  width: 100%;
-  text-align: left;
-  gap: 0.55rem;
-  padding: 0.42rem 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.activityItem:last-child {
-  border-bottom: none;
-}
-
-.activityDot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-top: 0.33rem;
-  flex-shrink: 0;
-}
-
-.activityDot-success {
-  background: #0ecb81;
-}
-
-.activityDot-error {
-  background: #f6465d;
-}
-
-.activityDot-warning {
-  background: #f59e0b;
-}
-
-.activityDot-info {
-  background: #3b82f6;
-}
-
-.activityContent {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-
-.activityMessage {
-  font-size: 0.84rem;
-  color: var(--text);
-  line-height: 1.25;
-}
-
-.activityTime {
-  font-size: 0.74rem;
-  color: var(--muted);
-}
-
-.quickActions {
-  padding: 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.65rem;
-}
-
-.quickBtn {
-  width: 100%;
-  border: 1px solid rgba(181, 190, 211, 0.38);
-  border-radius: 6px;
-  min-height: 40px;
-  background: linear-gradient(180deg, #1a1f26, #11161d);
-  color: #f7f9ff;
-  font-size: 0.85rem;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-  transition: transform 0.18s ease, border-color 0.18s ease;
-}
-
-.quickBtn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  border-color: rgba(228, 236, 255, 0.6);
-}
-
-.quickBtn:disabled {
-  opacity: 0.62;
-  cursor: not-allowed;
-}
-
-.quickBtnPrimary {
-  background: linear-gradient(180deg, #fbd36a, #f7a600);
-  border-color: rgba(247, 166, 0, 0.8);
-  color: #0b0e11;
-}
-
-.quickBtnRow {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.65rem;
+.recentAccountsCard {
+  padding: 0;
 }
 
 .recentAccountList {
@@ -302,12 +157,12 @@
   align-items: center;
   padding: 0.74rem 0;
   text-align: left;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--border);
   transition: background-color 0.18s ease;
 }
 
 .recentAccountRow:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .recentAccountRow:last-child {
@@ -334,21 +189,20 @@
   text-transform: capitalize;
 }
 
-.recentStatus.status-running {
-  color: #0ecb81;
-  background: rgba(14, 203, 129, 0.15);
-}
-
+.recentStatus.status-running { color: var(--success); background: rgba(34, 197, 94, 0.15); }
 .recentStatus.status-crashed,
-.recentStatus.status-error {
-  color: #f6465d;
-  background: rgba(246, 70, 93, 0.15);
-}
-
+.recentStatus.status-error { color: var(--danger); background: rgba(239, 68, 68, 0.15); }
 .recentStatus.status-stopped,
-.recentStatus.status-default {
-  color: #9ca3af;
-  background: rgba(107, 114, 128, 0.2);
+.recentStatus.status-default { color: var(--stopped); background: rgba(107, 114, 128, 0.2); }
+.recentStatus.status-needs_2fa,
+.recentStatus.status-awaiting_2fa { color: var(--info); background: rgba(59, 130, 246, 0.15); }
+.recentStatus.status-banned { color: var(--danger); background: rgba(239, 68, 68, 0.15); }
+.recentStatus.status-paused { color: var(--warning); background: rgba(234, 179, 8, 0.15); }
+
+.mutedLine {
+  color: var(--muted);
+  font-size: 0.84rem;
+  padding: 0.6rem 0;
 }
 
 .viewAllAccountsBtn {
@@ -356,28 +210,24 @@
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  color: #f7a600;
+  color: var(--accent);
   font-size: 0.84rem;
   font-weight: 600;
 }
 
 .viewAllAccountsBtn:hover {
-  color: #ffce5a;
+  color: #fbd36a;
 }
 
 @media (max-width: 1140px) {
   .dashboardStatsGrid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 980px) {
+@media (max-width: 768px) {
   .dashboardStatsGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .dashboardMidGrid {
-    grid-template-columns: 1fr;
   }
 
   .licenseCard {
@@ -385,8 +235,8 @@
     align-items: flex-start;
   }
 
-  .licenseRight {
-    width: 100%;
+  .licenseActions {
+    flex-wrap: wrap;
   }
 }
 
@@ -407,20 +257,26 @@
     padding: 0.8rem 0.85rem;
   }
 
-  .activityList {
-    min-height: 0;
-    padding: 0.55rem 0.85rem 0.85rem;
-  }
-
   .recentAccountList {
     padding: 0.35rem 0.85rem 0.75rem;
   }
 
   .dashboardStatsGrid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .quickBtnRow {
-    grid-template-columns: 1fr;
+  .dashboardPage {
+    gap: 16px;
+  }
+
+  .licenseActions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .licenseActionBtn {
+    width: 100%;
+    text-align: center;
+    justify-content: center;
   }
 }

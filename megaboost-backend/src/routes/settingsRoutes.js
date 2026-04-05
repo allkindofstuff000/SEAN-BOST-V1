@@ -1,5 +1,8 @@
 const express = require("express");
+const geoip = require("geoip-lite");
 const AppSettings = require("../model/AppSettings");
+const Account = require("../model/Account");
+const User = require("../model/User");
 const { isValidTelegramChatId, isValidTelegramToken } = require("../utils/telegram");
 const { TelegramSettings } = require("../model/TelegramSettings");
 const { getOrCreateAppSettings, sanitizeAppTimingPatch, buildAppSettingsPublicPayload } = require("../utils/appSettings");
@@ -40,6 +43,87 @@ async function patchTelegramSettingsByUserId(userIdInput, patch = {}) {
     }
   );
 }
+
+router.get("/language", async (req, res) => {
+  try {
+    const userId = getRequestUserId(req);
+    if (!userId) {
+      return res.status(401).json({ message: "Authentication required" });
+    }
+    const user = await User.findById(userId).select("language").lean();
+    return res.status(200).json({ language: user?.language || "en" });
+  } catch {
+    return res.status(200).json({ language: "en" });
+  }
+});
+
+router.post("/language", async (req, res) => {
+  try {
+    const userId = getRequestUserId(req);
+    if (!userId) {
+      return res.status(401).json({ message: "Authentication required" });
+    }
+    const lang = req.body?.language === "es" ? "es" : "en";
+    await User.findByIdAndUpdate(userId, { $set: { language: lang } });
+    return res.status(200).json({ saved: true, language: lang });
+  } catch (error) {
+    return res.status(500).json({ message: error?.message || "Failed to save language" });
+  }
+});
+
+router.get("/detect-timezone", async (req, res) => {
+  try {
+    const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+    const realIp = String(req.headers["x-real-ip"] || "").trim();
+    const cfIp = String(req.headers["cf-connecting-ip"] || "").trim();
+    const socketIp = String(req.socket?.remoteAddress || "").replace(/^::ffff:/, "");
+    const clientIp = forwarded || realIp || cfIp || socketIp || "";
+
+    const privatePatterns = /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|::1|localhost|0\.0\.0\.0)/;
+    if (!clientIp || privatePatterns.test(clientIp)) {
+      return res.status(200).json({
+        detected: false,
+        timezone: "UTC",
+        label: "UTC",
+        city: "",
+        ip: clientIp
+      });
+    }
+
+    const geo = geoip.lookup(clientIp);
+    if (geo && geo.timezone) {
+      const tz = geo.timezone;
+      const city = String(geo.city || "").trim();
+      const country = String(geo.country || "").trim();
+      const label = city ? `${city}${country ? `, ${country}` : ""}` : tz;
+
+      return res.status(200).json({
+        detected: true,
+        timezone: tz,
+        label,
+        city,
+        country,
+        ip: clientIp
+      });
+    }
+
+    return res.status(200).json({
+      detected: false,
+      timezone: "UTC",
+      label: "UTC",
+      city: "",
+      ip: clientIp
+    });
+  } catch (error) {
+    return res.status(200).json({
+      detected: false,
+      timezone: "UTC",
+      label: "UTC",
+      city: "",
+      ip: ""
+    });
+  }
+});
 
 router.get("/telegram", async (req, res) => {
   try {
@@ -97,6 +181,8 @@ async function saveAppSettings(req, res) {
         : existing.uiTimeFormat
     });
 
+    const timezoneChanged = patch.timezone && patch.timezone !== existing.timezone;
+
     const updated = await AppSettings.findOneAndUpdate(
       { userId },
       {
@@ -112,7 +198,18 @@ async function saveAppSettings(req, res) {
       }
     );
 
-    return res.status(200).json(buildAppSettingsPublicPayload(updated || existing));
+    let accountsUpdated = 0;
+    if (timezoneChanged) {
+      const result = await Account.updateMany(
+        { userId },
+        { $set: { timezone: patch.timezone } }
+      );
+      accountsUpdated = result.modifiedCount || 0;
+    }
+
+    const payload = buildAppSettingsPublicPayload(updated || existing);
+    payload.accounts_updated = accountsUpdated;
+    return res.status(200).json(payload);
   } catch (error) {
     return res.status(500).json({
       message: error?.message || "Failed to save app settings"

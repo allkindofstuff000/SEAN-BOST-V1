@@ -1,15 +1,16 @@
 .systemStatusBar {
+  height: 34px;
   min-height: 34px;
   display: flex;
   align-items: center;
   gap: 0.6rem;
-  padding: 0.4rem 1.25rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  padding: 0 20px;
   border-bottom: 1px solid var(--border);
-  background: #0a0d10;
-  color: #e2e8f0;
+  background: var(--statusbar, #0A0D10);
+  color: var(--text);
   font-size: 0.78rem;
-  font-weight: 600;
+  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+  font-weight: 500;
   white-space: nowrap;
   overflow-x: auto;
 }
@@ -31,6 +32,7 @@
 
 .statusLive {
   font-weight: 700;
+  color: var(--success);
 }
 
 .statusDot {
@@ -40,20 +42,22 @@
 }
 
 .statusDot.connected {
-  background: #0ecb81;
+  background: var(--success);
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
 }
 
 .statusDot.disconnected {
-  background: #f6465d;
+  background: var(--danger);
 }
 
 .statusDivider {
-  opacity: 0.55;
+  opacity: 0.35;
+  color: var(--muted);
 }
 
 @media (max-width: 840px) {
   .systemStatusBar {
     font-size: 0.72rem;
-    padding: 0.3rem 0.85rem;
+    padding: 0 12px;
   }
 }

@@ -2,6 +2,7 @@
 import { io } from "socket.io-client";
 import api, { getSocketBaseUrl } from "../lib/api";
 import { useAccounts } from "../context/AccountsContext";
+import { useLanguage } from "../context/LanguageContext";
 import "./SystemStatusBar.css";
 
 const HEARTBEAT_STALE_MS = 25_000;
@@ -14,6 +15,7 @@ function toNumber(value, fallback = 0) {
 
 export default function SystemStatusBar() {
   const { accounts, queueState, selectors } = useAccounts();
+  const { t } = useLanguage();
   const [connected, setConnected] = useState(false);
   const [logStats, setLogStats] = useState({ total: 0, error: 0 });
   const [systemSnapshot, setSystemSnapshot] = useState(null);
@@ -150,18 +152,18 @@ export default function SystemStatusBar() {
     <div className="systemStatusBar" role="status" aria-live="polite">
       <span className="statusSegment statusLive">
         <span className={`statusDot ${connected ? "connected" : "disconnected"}`} />
-        {connected ? "Live Connected" : "Live Disconnected"}
+        {connected ? t('status.liveConnected') : t('status.liveDisconnected')}
         {" — "}
-        {`Workers Running: ${workersRunning}`}
+        {t('status.workersRunning')}: {workersRunning}
       </span>
       <span className="statusDivider">|</span>
-      <span className="statusSegment">Heartbeat: {heartbeatWorkersRunning}</span>
+      <span className="statusSegment">{t('status.heartbeat')}: {heartbeatWorkersRunning}</span>
       <span className="statusDivider">|</span>
-      <span className="statusSegment">Queue: {queueValue}</span>
+      <span className="statusSegment">{t('status.queue')}: {queueValue}</span>
       <span className="statusDivider">|</span>
-      <span className="statusSegment">Proxy Health: {proxyHealth}%</span>
+      <span className="statusSegment">{t('status.proxyHealth')}: {proxyHealth}%</span>
       <span className="statusDivider">|</span>
-      <span className="statusSegment">Uptime: {uptime}%</span>
+      <span className="statusSegment">{t('status.uptime')}: {uptime}%</span>
     </div>
   );
 }

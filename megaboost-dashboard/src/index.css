@@ -3,21 +3,32 @@
 @tailwind utilities;
 
 :root {
-  --bg: #0b0e11;
-  --navbar: #0d1117;
-  --card: #161b22;
-  --card2: #161b22;
-  --border: rgba(255, 255, 255, 0.08);
-  --accent: #f7a600;
-  --accent-strong: #f7a600;
-  --text: #e2e8f0;
-  --muted: #6b7280;
-  --field: #0f1319;
-  --success: #0ecb81;
-  --danger: #f6465d;
-  --warning: #f59e0b;
+  /* Page backgrounds */
+  --bg: #0B0E11;
+  --navbar: #0D1117;
+  --statusbar: #0A0D10;
+  --card: #161B22;
+  --card2: #1E2336;
+  --field: #1C2130;
+
+  /* Borders */
+  --border: rgba(255,255,255,0.08);
+  --border-card: rgba(255,255,255,0.10);
+
+  /* Accents */
+  --accent: #f5a623;
+  --accent-strong: #f5a623;
+  --success: #22c55e;
+  --danger: #ef4444;
+  --warning: #eab308;
   --info: #3b82f6;
-  --cyan: #22d3ee;
+  --cyan: #06b6d4;
+  --stopped: #6b7280;
+
+  /* Text */
+  --text: #ffffff;
+  --muted: #888888;
+  --subtle: #444444;
 }
 
 *,
@@ -31,19 +42,22 @@ body,
 #root {
   width: 100%;
   min-height: 100%;
+  margin: 0;
 }
 
 body {
-  margin: 0;
   color: var(--text);
   background: var(--bg) !important;
   background-image: none !important;
   font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
   overflow-x: hidden;
 }
 
 #root {
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 main {
@@ -55,112 +69,154 @@ main {
   background: var(--bg);
 }
 
-.bg-card {
-  background: var(--card) !important;
+/* Mono font utility */
+.mono {
+  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
 }
 
-.bg-accent {
-  background: var(--accent) !important;
-}
-
-.themeBorder {
-  border-color: var(--border) !important;
-}
-
-.themeMuted {
+th {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+  font-size: 0.75rem;
   color: var(--muted);
 }
 
+/* ── Cards ── */
 .themeCard {
-  border: 1px solid var(--border);
-  border-radius: 0.75rem;
+  border: 1px solid var(--border-card);
+  border-radius: 12px;
   background: var(--card);
-  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.22);
 }
 
 .themeSubCard {
   border: 1px solid var(--border);
-  border-radius: 0.7rem;
-  background: #11161d;
+  border-radius: 10px;
+  background: var(--card2);
 }
 
 .themePanelHeader {
-  background: #0f1319;
+  background: var(--card2);
 }
 
+/* ── Fields ── */
 .themeField {
   background: var(--field);
   border: 1px solid var(--border);
   color: #fff;
+  border-radius: 8px;
 }
 
 .themeField:focus {
-  border-color: rgba(247, 166, 0, 0.7);
-  box-shadow: 0 0 0 1px rgba(247, 166, 0, 0.25);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(245, 166, 35, 0.25);
+  outline: none;
 }
 
+/* ── Buttons ── */
 .themeBtnAccent {
-  border: 1px solid rgba(247, 166, 0, 0.8);
-  border-radius: 0.625rem;
-  background: linear-gradient(180deg, #fbd36a, var(--accent-strong));
-  color: #0b0e11;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fbd36a, var(--accent));
+  color: #0B0E11;
   font-weight: 700;
-  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
 
 .themeBtnAccent:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 0 16px rgba(247, 166, 0, 0.35);
+  box-shadow: 0 0 16px rgba(245, 166, 35, 0.35);
 }
 
 .themeBtnMuted {
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 0.625rem;
-  background: linear-gradient(180deg, #1a1f26, #11161d);
-  color: #e2e8f0;
+  border: 1px solid var(--border-card);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
   font-weight: 600;
+  cursor: pointer;
   transition: transform 0.18s ease, border-color 0.18s ease;
 }
 
 .themeBtnMuted:hover:not(:disabled) {
   transform: translateY(-1px);
-  border-color: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255,255,255,0.2);
 }
 
 .themeBtnDanger {
-  border: 1px solid rgba(246, 70, 93, 0.6);
-  border-radius: 0.625rem;
-  background: linear-gradient(180deg, #f87287, #f6465d);
+  border: 1px solid rgba(239, 68, 68, 0.6);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #f87171, #ef4444);
   color: #fff;
   font-weight: 600;
+  cursor: pointer;
   transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
 
 .themeBtnDanger:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 0 16px rgba(246, 70, 93, 0.28);
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.28);
 }
 
+.themeBtnTeal {
+  border: 1px solid rgba(6, 182, 212, 0.5);
+  border-radius: 8px;
+  background: transparent;
+  color: #06b6d4;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+
+.themeBtnTeal:hover:not(:disabled) {
+  background: rgba(6, 182, 212, 0.1);
+  border-color: rgba(6, 182, 212, 0.7);
+}
+
+.themeBtnPink {
+  border: 1px solid rgba(244, 63, 94, 0.5);
+  border-radius: 8px;
+  background: transparent;
+  color: #f43f5e;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+
+.themeBtnPink:hover:not(:disabled) {
+  background: rgba(244, 63, 94, 0.1);
+  border-color: rgba(244, 63, 94, 0.7);
+}
+
+/* ── Utility classes ── */
+.bg-card { background: var(--card) !important; }
+.bg-accent { background: var(--accent) !important; }
+.themeBorder { border-color: var(--border) !important; }
+.themeMuted { color: var(--muted); }
+
+/* ── Page shells ── */
 .pageShell {
   display: flex;
   flex-direction: column;
-  gap: 1.2rem;
+  gap: 20px;
 }
 
 .pageInner {
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 20px;
 }
 
+/* ── Tab bars ── */
 .themeTabBar {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 4px;
   border: 1px solid var(--border);
-  border-radius: 0.75rem;
-  padding: 0.35rem;
-  background: #0f1319;
+  border-radius: 12px;
+  padding: 4px;
+  background: var(--card2);
   overflow-x: auto;
 }
 
@@ -169,12 +225,13 @@ main {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0.55rem 0.9rem 0.7rem;
-  border-radius: 0.55rem;
+  padding: 8px 14px 10px;
+  border-radius: 8px;
   font-size: 0.9rem;
   font-weight: 600;
-  color: rgba(226, 232, 240, 0.78);
+  color: var(--muted);
   white-space: nowrap;
+  cursor: pointer;
   transition: color 0.18s ease, background-color 0.18s ease;
 }
 
@@ -184,8 +241,8 @@ main {
 }
 
 .themeTab.is-active {
-  color: #f7a600;
-  background: rgba(247, 166, 0, 0.12);
+  color: var(--accent);
+  background: rgba(245, 166, 35, 0.1);
 }
 
 .themeTab.is-active::after {
@@ -196,18 +253,47 @@ main {
   bottom: 4px;
   height: 2px;
   border-radius: 999px;
-  background: #f7a600;
-  box-shadow: 0 0 6px rgba(247, 166, 0, 0.5);
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(245, 166, 35, 0.5);
 }
 
-th {
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
-  font-size: 12px;
+/* ── Status badges ── */
+.statusBadge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  text-transform: capitalize;
+  display: inline-flex;
+  align-items: center;
+}
+
+.statusBadge-running, .statusBadge-active, .statusBadge-success { color: var(--success); background: rgba(34,197,94,0.15); }
+.statusBadge-stopped { color: var(--stopped); background: rgba(107,114,128,0.2); }
+.statusBadge-crashed, .statusBadge-banned, .statusBadge-error, .statusBadge-expired, .statusBadge-inactive { color: var(--danger); background: rgba(239,68,68,0.15); }
+.statusBadge-needs_2fa, .statusBadge-awaiting_2fa, .statusBadge-info { color: var(--cyan); background: rgba(6,182,212,0.15); }
+.statusBadge-paused, .statusBadge-warning { color: var(--warning); background: rgba(234,179,8,0.15); }
+
+/* ── Admin tabs ── */
+.adminTabs {
+  display: flex;
+  gap: 24px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+}
+
+.adminTab {
+  padding-bottom: 8px;
+  font-size: 0.875rem;
+  font-weight: 500;
   color: var(--muted);
+  text-decoration: none;
+  transition: color 0.18s ease;
 }
 
-.mono {
-  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+.adminTab:hover { color: var(--text); }
+
+.adminTab.active {
+  color: var(--accent);
+  border-bottom: 2px solid var(--accent);
 }

@@ -372,6 +372,124 @@ exports.getLogStats = async (req, res) => {
   }
 };
 
+// GET SOURCE IPS (aggregated across all logs)
+exports.getSourceIps = async (req, res) => {
+  try {
+    setNoStore(res);
+
+    const pipeline = [
+      { $match: tenantFilter(req, { ip: { $exists: true, $ne: "" } }) },
+      {
+        $group: {
+          _id: "$ip",
+          eventCount: { $sum: 1 },
+          lastAction: { $last: "$message" },
+          lastSeen: { $max: "$createdAt" }
+        }
+      },
+      { $sort: { eventCount: -1 } },
+      { $limit: 20 }
+    ];
+
+    const results = await Log.aggregate(pipeline);
+    const data = results.map((row) => ({
+      ip: row._id,
+      eventCount: row.eventCount,
+      lastAction: row.lastAction || "User Action",
+      lastSeen: row.lastSeen
+    }));
+
+    const uniqueCount = await Log.distinct("ip", tenantFilter(req, { ip: { $exists: true, $ne: "" } }));
+
+    return res.status(200).json({
+      data,
+      uniqueCount: uniqueCount.length,
+      flaggedCount: 0
+    });
+  } catch (error) {
+    console.error("Source IPs Error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// GET AFFECTED ACCOUNTS (aggregated across all logs)
+exports.getAffectedAccounts = async (req, res) => {
+  try {
+    setNoStore(res);
+
+    const pipeline = [
+      { $match: tenantFilter(req, { email: { $exists: true, $ne: "" } }) },
+      {
+        $group: {
+          _id: "$email",
+          count: { $sum: 1 },
+          messages: { $push: "$message" }
+        }
+      },
+      { $sort: { count: -1 } },
+      { $limit: 20 }
+    ];
+
+    const results = await Log.aggregate(pipeline);
+    let deletedCount = 0;
+
+    const data = results.map((row) => {
+      const deleted = Array.isArray(row.messages) && row.messages.some(
+        (msg) => typeof msg === "string" && /delet/i.test(msg)
+      );
+      if (deleted) deletedCount += 1;
+
+      return {
+        email: row._id,
+        count: row.count,
+        deleted
+      };
+    });
+
+    return res.status(200).json({
+      data,
+      accountsTouched: data.length,
+      deletedCount
+    });
+  } catch (error) {
+    console.error("Affected Accounts Error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// EXPORT LOGS (CSV or JSON file download)
+exports.exportLogs = async (req, res) => {
+  try {
+    const format = String(req.query.format || "json").toLowerCase();
+    const logs = await Log.find(tenantFilter(req))
+      .select(LOG_SELECT_FIELDS)
+      .sort({ createdAt: -1 })
+      .limit(10000)
+      .lean();
+
+    if (format === "csv") {
+      const header = "Time,Level,Message,Email,IP,Account ID";
+      const rows = logs.map((log) => {
+        const time = log.createdAt ? new Date(log.createdAt).toISOString() : "";
+        const msg = String(log.message || "").replace(/"/g, '""');
+        return `${time},${log.level || ""},"${msg}",${log.email || ""},${log.ip || ""},${log.accountId || ""}`;
+      });
+
+      const csv = [header, ...rows].join("\n");
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", "attachment; filename=activity_logs.csv");
+      return res.send(csv);
+    }
+
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Disposition", "attachment; filename=activity_logs.json");
+    return res.send(JSON.stringify(logs, null, 2));
+  } catch (error) {
+    console.error("Export Logs Error:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // GET ANALYTICS (daily / weekly + level breakdown)
 exports.getLogAnalytics = async (req, res) => {
   try {
