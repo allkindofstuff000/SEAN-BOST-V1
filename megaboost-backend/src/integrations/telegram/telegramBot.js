@@ -21,6 +21,7 @@ const {
   buildAccountPickerKeyboard,
   formatPanelTime
 } = require("./panel");
+const { t, translateStatus, translateWorker, normalizeLang } = require("./i18n");
 
 const ACTION_COOLDOWN_MS = 2000;
 const REFRESH_SETTINGS_INTERVAL_MS = 30000;
@@ -62,6 +63,13 @@ function toLower(value) {
 
 function getScopedUserId(settings) {
   return normalizeString(settings?.userId);
+}
+
+async function getUserLanguage(userIdInput) {
+  const userId = normalizeString(userIdInput);
+  if (!userId) return "en";
+  const user = await User.findById(userId).select("language").lean().catch(() => null);
+  return normalizeLang(user?.language);
 }
 
 function buildScopedAccountQuery(settings) {
@@ -401,10 +409,11 @@ async function ensureAuthorizedSender(bot, source, userIdInput, options = {}) {
     };
   }
 
+  const lang = options?.lang || "en";
   return {
     ok: false,
     status: 403,
-    message: requireAdmin ? "Only a Telegram admin can do that." : "Not authorized.",
+    message: requireAdmin ? t(lang, "err_admin_only") : t(lang, "err_not_authorized"),
     appSettings
   };
 }
@@ -460,7 +469,7 @@ function resolveWorkerHealthLabel(account, debugSnapshot) {
   return status || "unknown";
 }
 
-function buildSingleAccountKeyboard(accountIdInput) {
+function buildSingleAccountKeyboard(accountIdInput, lang = "en") {
   const accountId = normalizeString(accountIdInput);
   if (!accountId) {
     return undefined;
@@ -470,17 +479,17 @@ function buildSingleAccountKeyboard(accountIdInput) {
     inline_keyboard: [
       [
         {
-          text: "\u23F8 Pause",
+          text: t(lang, "btn_pause"),
           callback_data: `${SINGLE_ACCOUNT_CALLBACK_PREFIX}:pause:${accountId}`
         },
         {
-          text: "\u25B6\uFE0F Resume",
+          text: t(lang, "btn_resume"),
           callback_data: `${SINGLE_ACCOUNT_CALLBACK_PREFIX}:resume:${accountId}`
         }
       ],
       [
         {
-          text: "\uD83D\uDD01 Restart",
+          text: t(lang, "btn_restart"),
           callback_data: `${SINGLE_ACCOUNT_CALLBACK_PREFIX}:restart:${accountId}`
         }
       ]
@@ -490,6 +499,7 @@ function buildSingleAccountKeyboard(accountIdInput) {
 
 async function buildSingleAccountStatusView(account, userIdInput, options = {}) {
   const userId = normalizeString(userIdInput || account?.userId);
+  const lang = options?.lang || (await getUserLanguage(userId));
   const appSettings = options?.appSettings || (await loadAppSettings(userId));
   const debugSnapshot =
     options?.debugSnapshot ||
@@ -501,36 +511,37 @@ async function buildSingleAccountStatusView(account, userIdInput, options = {}) 
   const status = normalizeString(debugSnapshot?.status || account?.status || "unknown");
 
   const lines = [
-    "\u2705 Account Control",
-    `\uD83D\uDCE7 Email: ${normalizeString(account?.email) || "-"}`,
-    `\uD83C\uDD94 Account ID: ${normalizeString(account?._id) || "-"}`,
-    `\uD83D\uDCCA Status: ${status || "-"}`,
-    `\uD83C\uDF0D Proxy: ${buildProxyLabel(account)}`,
-    `\uD83D\uDD52 Next Bump: ${
+    t(lang, "acc_control"),
+    `${t(lang, "acc_email")}: ${normalizeString(account?.email) || "-"}`,
+    `${t(lang, "acc_id")}: ${normalizeString(account?._id) || "-"}`,
+    `${t(lang, "acc_status")}: ${status ? translateStatus(lang, status) : "-"}`,
+    `${t(lang, "acc_proxy")}: ${buildProxyLabel(account)}`,
+    `${t(lang, "acc_next_bump")}: ${
       nextBumpAt ? formatDateTimeForAdmin(nextBumpAt, appSettings, { includeDate: false }) : "-"
     }`,
-    `\uD83D\uDCC8 Total Bumps Today: ${Number(account?.totalBumpsToday || 0)}`,
-    `\uD83E\uDE7A Worker: ${workerHealth}`
+    `${t(lang, "acc_total_bumps")}: ${Number(account?.totalBumpsToday || 0)}`,
+    `${t(lang, "acc_worker")}: ${translateWorker(lang, workerHealth)}`
   ];
 
   if (lastBumpAt) {
     lines.push(
-      `\u23EE Last Bump: ${formatDateTimeForAdmin(lastBumpAt, appSettings, {
+      `${t(lang, "acc_last_bump")}: ${formatDateTimeForAdmin(lastBumpAt, appSettings, {
         includeDate: true
       })}`
     );
   }
 
   if (normalizeString(debugSnapshot?.currentStep)) {
-    lines.push(`\uD83D\uDEE0 Step: ${normalizeString(debugSnapshot.currentStep)}`);
+    lines.push(`${t(lang, "acc_step")}: ${normalizeString(debugSnapshot.currentStep)}`);
   }
 
   return {
     text: lines.join("\n"),
-    replyMarkup: buildSingleAccountKeyboard(account?._id),
+    replyMarkup: buildSingleAccountKeyboard(account?._id, lang),
     parseMode: undefined,
     appSettings,
-    debugSnapshot
+    debugSnapshot,
+    lang
   };
 }
 
@@ -540,6 +551,8 @@ async function buildBoundAccountView(settings, options = {}) {
   if (!userId || !chatId) {
     return null;
   }
+
+  const lang = options?.lang || (await getUserLanguage(userId));
 
   const binding = await getTelegramGroupBinding({
     userId,
@@ -558,7 +571,8 @@ async function buildBoundAccountView(settings, options = {}) {
     });
 
     const view = await buildSingleAccountStatusView(resolved.account, userId, {
-      appSettings: options?.appSettings
+      appSettings: options?.appSettings,
+      lang
     });
 
     return {
@@ -568,7 +582,7 @@ async function buildBoundAccountView(settings, options = {}) {
     };
   } catch (error) {
     return {
-      text: String(error?.message || "Bound account is unavailable."),
+      text: String(error?.message || t(lang, "bind_unavailable")),
       replyMarkup: undefined,
       parseMode: undefined,
       binding
@@ -576,21 +590,21 @@ async function buildBoundAccountView(settings, options = {}) {
   }
 }
 
-function buildGlobalPanelView(stats) {
+function buildGlobalPanelView(stats, lang = "en") {
   return {
-    text: buildPanelText(stats),
-    replyMarkup: buildPanelKeyboard(),
+    text: buildPanelText(stats, lang),
+    replyMarkup: buildPanelKeyboard(lang),
     parseMode: "HTML"
   };
 }
 
-function buildSingleAccountUsageText(command) {
+function buildSingleAccountUsageText(command, lang = "en") {
   const action = normalizeString(command || "status") || "status";
   return [
-    "Target account required for this chat.",
-    `Use /${action} email@example.com`,
-    `Use /${action} ACCOUNT_ID`,
-    `Or bind this group first with /bind_account email@example.com`
+    t(lang, "usage_target_required"),
+    t(lang, "usage_use_email", { a: action }),
+    t(lang, "usage_use_id", { a: action }),
+    t(lang, "usage_bind_hint")
   ].join("\n");
 }
 
@@ -623,11 +637,13 @@ async function upsertPanelMessage(bot, settings, options = {}) {
     };
   }
 
+  const lang = options?.lang || (await getUserLanguage(getScopedUserId(settings)));
   const boundView = await buildBoundAccountView(settings, {
     chatId,
-    appSettings: options?.appSettings
+    appSettings: options?.appSettings,
+    lang
   });
-  const panelView = boundView || buildGlobalPanelView(await buildPanelStats(settings));
+  const panelView = boundView || buildGlobalPanelView(await buildPanelStats(settings), lang);
   const text = panelView.text;
   const replyMarkup =
     options?.replyMarkup !== undefined ? options.replyMarkup : panelView.replyMarkup;
@@ -883,7 +899,7 @@ function parseTargetArgument(text, command) {
   return rawText.replace(botCommandPattern, "").trim();
 }
 
-async function resolveTelegramCommandAccount(userId, chatId, rawTarget, command) {
+async function resolveTelegramCommandAccount(userId, chatId, rawTarget, command, lang = "en") {
   try {
     return await resolveAccountTarget({
       userId,
@@ -894,27 +910,27 @@ async function resolveTelegramCommandAccount(userId, chatId, rawTarget, command)
     });
   } catch (error) {
     if (error?.code === "missing_target") {
-      error.message = buildSingleAccountUsageText(command);
+      error.message = buildSingleAccountUsageText(command, lang);
     }
     throw error;
   }
 }
 
-async function performTelegramAccountAction(action, account) {
+async function performTelegramAccountAction(action, account, lang = "en") {
   const normalizedAction = normalizeString(action).toLowerCase();
   if (normalizedAction === "pause") {
     await setAccountPaused(account);
-    return "\u23F8 Paused account";
+    return t(lang, "act_paused");
   }
 
   if (normalizedAction === "resume") {
     await setAccountResumed(account);
-    return "\u25B6\uFE0F Resumed account";
+    return t(lang, "act_resumed");
   }
 
   if (normalizedAction === "restart") {
     await setAccountRestarted(account);
-    return "\uD83D\uDD01 Restart requested for";
+    return t(lang, "act_restart_requested");
   }
 
   throw new Error("Unsupported Telegram account action");
@@ -973,6 +989,7 @@ async function resumeAllAccounts(settings) {
 }
 
 async function ensureAuthorizedSettings(chatId, settings, options = {}) {
+  const lang = options?.lang || "en";
   const token = normalizeString(settings?.botToken);
   const savedChatId = normalizeString(settings?.chatId);
 
@@ -980,7 +997,7 @@ async function ensureAuthorizedSettings(chatId, settings, options = {}) {
     return {
       ok: false,
       status: 400,
-      message: "Telegram is not configured.",
+      message: t(lang, "err_not_configured"),
       settings
     };
   }
@@ -998,7 +1015,7 @@ async function ensureAuthorizedSettings(chatId, settings, options = {}) {
     return {
       ok: false,
       status: 403,
-      message: "Not authorized.",
+      message: t(lang, "err_not_authorized"),
       settings
     };
   }
@@ -1007,7 +1024,7 @@ async function ensureAuthorizedSettings(chatId, settings, options = {}) {
     return {
       ok: false,
       status: 400,
-      message: "Telegram user scope is missing. Save Telegram settings again from your dashboard.",
+      message: t(lang, "err_scope_missing"),
       settings
     };
   }
@@ -1023,15 +1040,16 @@ async function handlePanelCommand(bot, message, userId) {
 
   const chatId = normalizeString(message?.chat?.id);
   const settings = await getOrCreateTelegramSettings(userId);
-  const senderAuth = await ensureAuthorizedSender(bot, message, userId);
+  const lang = await getUserLanguage(userId);
+  const senderAuth = await ensureAuthorizedSender(bot, message, userId, { lang });
   if (!senderAuth.ok) {
-    await bot.sendMessage(chatId, senderAuth.message || "Not authorized.").catch(() => null);
+    await bot.sendMessage(chatId, senderAuth.message || t(lang, "err_not_authorized")).catch(() => null);
     return;
   }
 
-  const auth = await ensureAuthorizedSettings(chatId, settings);
+  const auth = await ensureAuthorizedSettings(chatId, settings, { lang });
   if (!auth.ok) {
-    await bot.sendMessage(chatId, auth.message || "Not authorized.").catch(() => null);
+    await bot.sendMessage(chatId, auth.message || t(lang, "err_not_authorized")).catch(() => null);
     return;
   }
 
@@ -1046,7 +1064,7 @@ async function handlePanelCommand(bot, message, userId) {
       await sendSingleAccountStatus(bot, chatId, resolved.account, getScopedUserId(auth.settings)).catch(() => null);
       return;
     } catch (error) {
-      await bot.sendMessage(chatId, String(error?.message || "Not authorized.")).catch(() => null);
+      await bot.sendMessage(chatId, String(error?.message || t(lang, "err_not_authorized"))).catch(() => null);
       return;
     }
   }
@@ -1054,7 +1072,8 @@ async function handlePanelCommand(bot, message, userId) {
   await upsertPanelMessage(bot, auth.settings, {
     forceRepost: true,
     chatId,
-    appSettings: senderAuth.appSettings
+    appSettings: senderAuth.appSettings,
+    lang
   });
 }
 
@@ -1112,14 +1131,15 @@ async function showAccountPicker(bot, query, mode, settings) {
 
   if (!bot || !chatId || !messageId) return;
 
+  const lang = await getUserLanguage(getScopedUserId(settings));
   const accounts = await listPickerAccounts(settings);
   if (!accounts.length) {
-    await safeAnswerCallback(bot, query.id, "No accounts found.");
+    await safeAnswerCallback(bot, query.id, t(lang, "cb_no_accounts"));
     return;
   }
 
   await bot
-    .editMessageReplyMarkup(buildAccountPickerKeyboard(mode, accounts), {
+    .editMessageReplyMarkup(buildAccountPickerKeyboard(mode, accounts, lang), {
       chat_id: chatId,
       message_id: messageId
     })
@@ -1131,10 +1151,10 @@ async function showAccountPicker(bot, query, mode, settings) {
 
   const pickerMessage =
     mode === "pause"
-      ? "Select account to pause"
+      ? t(lang, "cb_pick_pause")
       : mode === "restart"
-        ? "Select account to restart"
-        : "Select account to resume";
+        ? t(lang, "cb_pick_restart")
+        : t(lang, "cb_pick_resume");
   await safeAnswerCallback(bot, query.id, pickerMessage);
 
   if (!settings.panelMessageId || Number(settings.panelMessageId) !== messageId) {
@@ -1146,6 +1166,7 @@ async function showAccountPicker(bot, query, mode, settings) {
 async function handleAccountAction(bot, query, action, settings) {
   const scopedUserId = getScopedUserId(settings);
   const chatId = normalizeString(query?.message?.chat?.id);
+  const lang = await getUserLanguage(scopedUserId);
 
   let account = null;
   try {
@@ -1158,9 +1179,9 @@ async function handleAccountAction(bot, query, action, settings) {
     });
     account = resolved.account;
   } catch (error) {
-    await safeAnswerCallback(bot, query.id, String(error?.message || "Account not found."));
+    await safeAnswerCallback(bot, query.id, String(error?.message || t(lang, "err_account_not_found")));
     if (shouldRefreshPanelMessage(chatId, settings)) {
-      await upsertPanelMessage(bot, settings, { chatId });
+      await upsertPanelMessage(bot, settings, { chatId, lang });
     }
     return;
   }
@@ -1168,19 +1189,19 @@ async function handleAccountAction(bot, query, action, settings) {
   if (action.mode === "pause") {
     console.log(`${TELEGRAM_ACCOUNT_LOG_PREFIX} Pause requested for ${String(account._id)}`);
     await setAccountPaused(account);
-    await safeAnswerCallback(bot, query.id, "\u2705 Paused");
+    await safeAnswerCallback(bot, query.id, t(lang, "cb_paused"));
   } else if (action.mode === "restart") {
     console.log(`${TELEGRAM_ACCOUNT_LOG_PREFIX} Restart requested for ${String(account._id)}`);
     await setAccountRestarted(account);
-    await safeAnswerCallback(bot, query.id, "\u2705 Restart requested");
+    await safeAnswerCallback(bot, query.id, t(lang, "cb_restart_requested"));
   } else {
     console.log(`${TELEGRAM_ACCOUNT_LOG_PREFIX} Resume requested for ${String(account._id)}`);
     await setAccountResumed(account);
-    await safeAnswerCallback(bot, query.id, "\u2705 Resumed");
+    await safeAnswerCallback(bot, query.id, t(lang, "cb_resumed"));
   }
 
   if (shouldRefreshPanelMessage(chatId, settings)) {
-    await upsertPanelMessage(bot, settings, { chatId });
+    await upsertPanelMessage(bot, settings, { chatId, lang });
   }
 }
 
@@ -1189,17 +1210,18 @@ async function handleCallbackQuery(bot, query, userId, cooldownByChatId) {
 
   const data = normalizeString(query?.data);
   const chatId = normalizeString(query?.message?.chat?.id);
+  const lang = await getUserLanguage(userId);
 
   const settings = await getOrCreateTelegramSettings(userId);
-  const auth = await ensureAuthorizedSettings(chatId, settings);
+  const auth = await ensureAuthorizedSettings(chatId, settings, { lang });
   if (!auth.ok) {
-    await safeAnswerCallback(bot, query?.id, auth.message || "Not authorized.");
+    await safeAnswerCallback(bot, query?.id, auth.message || t(lang, "err_not_authorized"));
     return;
   }
 
-  const senderAuth = await ensureAuthorizedSender(bot, query, userId);
+  const senderAuth = await ensureAuthorizedSender(bot, query, userId, { lang });
   if (!senderAuth.ok) {
-    await safeAnswerCallback(bot, query?.id, senderAuth.message || "Not authorized.");
+    await safeAnswerCallback(bot, query?.id, senderAuth.message || t(lang, "err_not_authorized"));
     return;
   }
 
@@ -1221,7 +1243,7 @@ async function handleCallbackQuery(bot, query, userId, cooldownByChatId) {
     Boolean(singleAccountAction) ||
     Boolean(action);
   if (requiresCooldown && !consumeActionCooldown(cooldownByChatId, chatId)) {
-    await safeAnswerCallback(bot, query?.id, "Please wait 2 seconds.");
+    await safeAnswerCallback(bot, query?.id, t(lang, "cb_wait"));
     return;
   }
 
@@ -1243,14 +1265,15 @@ async function handleCallbackQuery(bot, query, userId, cooldownByChatId) {
       await safeAnswerCallback(
         bot,
         query.id,
-        `This group is bound to ${getAccountAliasDisplay(resolved?.account, {
-          fallbackToEmail: true
-        })} only.`
+        t(lang, "cb_bound_only", {
+          x: getAccountAliasDisplay(resolved?.account, { fallbackToEmail: true })
+        })
       );
       if (shouldRefreshPanelMessage(chatId, scopedSettings)) {
         await upsertPanelMessage(bot, scopedSettings, {
           chatId,
-          appSettings: senderAuth.appSettings
+          appSettings: senderAuth.appSettings,
+          lang
         }).catch(() => null);
       }
       return;
@@ -1265,7 +1288,7 @@ async function handleCallbackQuery(bot, query, userId, cooldownByChatId) {
         projection: DEFAULT_ACCOUNT_PROJECTION
       });
       const account = resolved.account;
-      const responsePrefix = await performTelegramAccountAction(singleAccountAction.mode, account);
+      const responsePrefix = await performTelegramAccountAction(singleAccountAction.mode, account, lang);
 
       if (singleAccountAction.mode === "pause") {
         console.log(`${TELEGRAM_ACCOUNT_LOG_PREFIX} Pause requested for ${String(account._id)}`);
@@ -1287,7 +1310,8 @@ async function handleCallbackQuery(bot, query, userId, cooldownByChatId) {
       if (shouldRefreshPanelMessage(chatId, scopedSettings)) {
         await upsertPanelMessage(bot, scopedSettings, {
           chatId,
-          appSettings: senderAuth.appSettings
+          appSettings: senderAuth.appSettings,
+          lang
         }).catch(() => null);
       }
       return;
@@ -1313,12 +1337,13 @@ async function handleCallbackQuery(bot, query, userId, cooldownByChatId) {
       await safeAnswerCallback(
         bot,
         query.id,
-        `\u2705 Paused ${summary.paused}, already paused ${summary.alreadyPaused}`
+        t(lang, "cb_paused_summary", { n: summary.paused, m: summary.alreadyPaused })
       );
       if (shouldRefreshPanelMessage(chatId, scopedSettings)) {
         await upsertPanelMessage(bot, scopedSettings, {
           chatId,
-          appSettings: senderAuth.appSettings
+          appSettings: senderAuth.appSettings,
+          lang
         });
       }
       return;
@@ -1329,12 +1354,13 @@ async function handleCallbackQuery(bot, query, userId, cooldownByChatId) {
       await safeAnswerCallback(
         bot,
         query.id,
-        `\u2705 Resumed ${summary.resumed}, already running ${summary.alreadyRunning}`
+        t(lang, "cb_resumed_summary", { n: summary.resumed, m: summary.alreadyRunning })
       );
       if (shouldRefreshPanelMessage(chatId, scopedSettings)) {
         await upsertPanelMessage(bot, scopedSettings, {
           chatId,
-          appSettings: senderAuth.appSettings
+          appSettings: senderAuth.appSettings,
+          lang
         });
       }
       return;
@@ -1345,14 +1371,15 @@ async function handleCallbackQuery(bot, query, userId, cooldownByChatId) {
       return;
     }
 
-    await safeAnswerCallback(bot, query.id, "Unsupported action.");
+    await safeAnswerCallback(bot, query.id, t(lang, "cb_unsupported"));
   } catch (error) {
     console.error("[TELEGRAM-PANEL] Callback action failed:", error?.stack || error?.message || error);
-    await safeAnswerCallback(bot, query?.id, String(error?.message || "Error: action failed").slice(0, 180));
+    await safeAnswerCallback(bot, query?.id, String(error?.message || t(lang, "cb_action_failed")).slice(0, 180));
     if (shouldRefreshPanelMessage(chatId, scopedSettings)) {
       await upsertPanelMessage(bot, scopedSettings, {
         chatId,
-        appSettings: senderAuth.appSettings
+        appSettings: senderAuth.appSettings,
+        lang
       }).catch(() => null);
     }
   }
@@ -1363,19 +1390,21 @@ async function handleTelegramAccountCommand(bot, message, userId, commandName) {
 
   const chatId = normalizeString(message?.chat?.id);
   const settings = await getOrCreateTelegramSettings(userId);
+  const lang = await getUserLanguage(userId);
   const normalizedCommand =
     normalizeString(commandName).toLowerCase() === "unpause"
       ? "resume"
       : normalizeString(commandName).toLowerCase();
   const senderAuth = await ensureAuthorizedSender(bot, message, userId, {
+    lang,
     requireAdmin: normalizedCommand === "bind_account" || normalizedCommand === "unbind_account"
   });
   if (!senderAuth.ok) {
-    await bot.sendMessage(chatId, senderAuth.message || "Not authorized.").catch(() => null);
+    await bot.sendMessage(chatId, senderAuth.message || t(lang, "err_not_authorized")).catch(() => null);
     return;
   }
 
-  const auth = await ensureAuthorizedSettings(chatId, settings);
+  const auth = await ensureAuthorizedSettings(chatId, settings, { lang });
   const canBindThisChat =
     normalizedCommand === "bind_account" &&
     !auth.ok &&
@@ -1384,7 +1413,7 @@ async function handleTelegramAccountCommand(bot, message, userId, commandName) {
     isValidTelegramChatId(settings?.chatId) &&
     Boolean(getScopedUserId(settings));
   if (!auth.ok && !canBindThisChat) {
-    await bot.sendMessage(chatId, auth.message || "Not authorized.").catch(() => null);
+    await bot.sendMessage(chatId, auth.message || t(lang, "err_not_authorized")).catch(() => null);
     return;
   }
 
@@ -1396,7 +1425,7 @@ async function handleTelegramAccountCommand(bot, message, userId, commandName) {
     if (normalizedCommand === "bind_account") {
       if (!rawTarget) {
         await bot
-          .sendMessage(chatId, "Use /bind_account email@example.com or /bind_account ACCOUNT_ID")
+          .sendMessage(chatId, t(lang, "bind_usage"))
           .catch(() => null);
         return;
       }
@@ -1422,9 +1451,9 @@ async function handleTelegramAccountCommand(bot, message, userId, commandName) {
       await bot
         .sendMessage(
           chatId,
-          `\u2705 Group bound to account ${getAccountAliasDisplay(resolved.account, {
-            fallbackToEmail: true
-          })}`
+          t(lang, "bind_ok", {
+            x: getAccountAliasDisplay(resolved.account, { fallbackToEmail: true })
+          })
         )
         .catch(() => null);
 
@@ -1432,7 +1461,8 @@ async function handleTelegramAccountCommand(bot, message, userId, commandName) {
         await upsertPanelMessage(bot, scopedSettings, {
           forceRepost: true,
           chatId,
-          appSettings: senderAuth.appSettings
+          appSettings: senderAuth.appSettings,
+          lang
         }).catch(() => null);
       } else {
         await sendSingleAccountStatus(bot, chatId, resolved.account, scopedUserId).catch(() => null);
@@ -1446,7 +1476,7 @@ async function handleTelegramAccountCommand(bot, message, userId, commandName) {
         chatId
       });
       if (!binding) {
-        await bot.sendMessage(chatId, "No account is currently bound to this group.").catch(() => null);
+        await bot.sendMessage(chatId, t(lang, "bind_none")).catch(() => null);
         return;
       }
 
@@ -1457,12 +1487,13 @@ async function handleTelegramAccountCommand(bot, message, userId, commandName) {
 
       console.log(`${TELEGRAM_ACCOUNT_LOG_PREFIX} Unbound group ${chatId}`);
 
-      await bot.sendMessage(chatId, "\uD83D\uDD13 Group unbound successfully").catch(() => null);
+      await bot.sendMessage(chatId, t(lang, "unbind_ok")).catch(() => null);
       if (shouldRefreshPanelMessage(chatId, scopedSettings)) {
         await upsertPanelMessage(bot, scopedSettings, {
           forceRepost: true,
           chatId,
-          appSettings: senderAuth.appSettings
+          appSettings: senderAuth.appSettings,
+          lang
         }).catch(() => null);
       }
       return;
@@ -1474,7 +1505,7 @@ async function handleTelegramAccountCommand(bot, message, userId, commandName) {
         chatId
       });
       if (!binding) {
-        await bot.sendMessage(chatId, "No account is currently bound to this group.").catch(() => null);
+        await bot.sendMessage(chatId, t(lang, "bind_none")).catch(() => null);
         return;
       }
 
@@ -1492,7 +1523,8 @@ async function handleTelegramAccountCommand(bot, message, userId, commandName) {
       scopedUserId,
       chatId,
       rawTarget,
-      normalizedCommand
+      normalizedCommand,
+      lang
     );
     const account = resolved.account;
     const accountLabel = getAccountAliasDisplay(account, {
@@ -1504,7 +1536,7 @@ async function handleTelegramAccountCommand(bot, message, userId, commandName) {
       return;
     }
 
-    const responsePrefix = await performTelegramAccountAction(normalizedCommand, account);
+    const responsePrefix = await performTelegramAccountAction(normalizedCommand, account, lang);
 
     if (normalizedCommand === "pause") {
       console.log(`${TELEGRAM_ACCOUNT_LOG_PREFIX} Pause requested for ${String(account._id)}`);
@@ -1518,11 +1550,12 @@ async function handleTelegramAccountCommand(bot, message, userId, commandName) {
     if (shouldRefreshPanelMessage(chatId, scopedSettings)) {
       await upsertPanelMessage(bot, scopedSettings, {
         chatId,
-        appSettings: senderAuth.appSettings
+        appSettings: senderAuth.appSettings,
+        lang
       }).catch(() => null);
     }
   } catch (error) {
-    await bot.sendMessage(chatId, String(error?.message || "Telegram command failed")).catch(() => null);
+    await bot.sendMessage(chatId, String(error?.message || t(lang, "err_command_failed"))).catch(() => null);
   }
 }
 

@@ -1,3 +1,5 @@
+const { t, translateStatus } = require("./i18n");
+
 function normalizeString(value) {
   return String(value || "").trim();
 }
@@ -35,7 +37,7 @@ function normalizeCount(value) {
   return Math.floor(parsed);
 }
 
-function buildPanelText(stats = {}) {
+function buildPanelText(stats = {}, lang = "en") {
   const userName = escapeHtml(normalizeString(stats.userName) || "Sean");
   const userHandle = escapeHtml((normalizeString(stats.userHandle) || "seanmega").replace(/^@+/, ""));
   const activeAccounts = normalizeCount(stats.activeAccounts);
@@ -49,41 +51,41 @@ function buildPanelText(stats = {}) {
   const lastUpdate = escapeHtml(formatPanelTime(stats.lastUpdate || new Date()));
 
   return [
-    "\u2705 Proxy &amp; User-Agent verified",
-    "\uD83D\uDE80 SeanBoost Manager",
+    t(lang, "panel_verified").replace("&", "&amp;"),
+    t(lang, "panel_title"),
     "",
-    `\uD83D\uDC64 User: ${userName} (@${userHandle})`,
-    `\uD83D\uDCCA Active Accounts: ${activeAccounts}`,
-    `\u25B6\uFE0F Running: ${running}   \u23F8 Paused: ${paused}   \uD83D\uDED1 Stopped: ${stopped}`,
-    `\u274C Crashed: ${crashed}   \uD83D\uDEAB Banned: ${banned}`,
-    `\uD83E\uDDFE Queue: ${queue}   \uD83E\uDE7A Proxy Health: ${proxyHealth}%`,
-    `\uD83D\uDD52 Last Update: ${lastUpdate}`
+    `${t(lang, "panel_user")}: ${userName} (@${userHandle})`,
+    `${t(lang, "panel_active")}: ${activeAccounts}`,
+    `${t(lang, "panel_running")}: ${running}   ${t(lang, "panel_paused")}: ${paused}   ${t(lang, "panel_stopped")}: ${stopped}`,
+    `${t(lang, "panel_crashed")}: ${crashed}   ${t(lang, "panel_banned")}: ${banned}`,
+    `${t(lang, "panel_queue")}: ${queue}   ${t(lang, "panel_proxy_health")}: ${proxyHealth}%`,
+    `${t(lang, "panel_last_update")}: ${lastUpdate}`
   ].join("\n");
 }
 
-function buildPanelKeyboard() {
+function buildPanelKeyboard(lang = "en") {
   return {
     inline_keyboard: [
       [
-        { text: "\u23F8 Pause", callback_data: "pause_one" },
-        { text: "\u25B6\uFE0F Resume", callback_data: "resume_one" }
+        { text: t(lang, "btn_pause"), callback_data: "pause_one" },
+        { text: t(lang, "btn_resume"), callback_data: "resume_one" }
       ],
-      [{ text: "\uD83D\uDD04 Restart", callback_data: "restart_one" }],
+      [{ text: t(lang, "btn_restart"), callback_data: "restart_one" }],
       [
-        { text: "\u23F8 Pause all", callback_data: "pause_all" },
-        { text: "\u25B6\uFE0F Resume all", callback_data: "resume_all" }
+        { text: t(lang, "btn_pause_all"), callback_data: "pause_all" },
+        { text: t(lang, "btn_resume_all"), callback_data: "resume_all" }
       ]
     ]
   };
 }
 
-function toPickerStatusLabel(account) {
+function toPickerStatusLabel(account, lang = "en") {
   const status = normalizeString(account?.status).toLowerCase();
-  if (!status) return "unknown";
-  return status;
+  if (!status) return translateStatus(lang, "unknown");
+  return translateStatus(lang, status);
 }
 
-function buildAccountPickerKeyboard(mode, accounts = []) {
+function buildAccountPickerKeyboard(mode, accounts = [], lang = "en") {
   const normalizedMode = normalizeString(mode).toLowerCase();
   const action =
     normalizedMode === "resume"
@@ -95,7 +97,7 @@ function buildAccountPickerKeyboard(mode, accounts = []) {
   const rows = accounts
     .filter((account) => account && account._id && account.email)
     .map((account) => [{
-      text: `${String(account.email)} | ${toPickerStatusLabel(account)}`,
+      text: `${String(account.email)} | ${toPickerStatusLabel(account, lang)}`,
       callback_data: `${action}:${String(account._id)}`
     }]);
 
