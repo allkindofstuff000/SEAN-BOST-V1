@@ -49,7 +49,9 @@ function mapAccountToForm(account) {
 
   return {
     email: account.email || "",
-    password: account.password || "",
+    // Never prefill the password on edit. Blank means "keep the current
+    // password"; it is only sent when the user types a new one (see handleSubmit).
+    password: "",
     proxyHost: account.proxyHost || "",
     proxyPort: account.proxyPort != null ? String(account.proxyPort) : "8080",
     proxyUsername: account.proxyUsername || "",
@@ -158,7 +160,8 @@ export default function EditAccount() {
     const nextErrors = {};
 
     if (!form.email.trim()) nextErrors.email = "Email Address is required";
-    if (!form.password || form.password.length < 6) nextErrors.password = "Password must be at least 6 characters";
+    // Password is optional on edit — only validate it when the user is changing it.
+    if (form.password && form.password.length < 6) nextErrors.password = "Password must be at least 6 characters";
     if (!form.proxyHost.trim()) nextErrors.proxyHost = "Proxy Host is required";
     if (!form.proxyPort || Number.isNaN(Number(form.proxyPort))) nextErrors.proxyPort = "Proxy Port must be numeric";
     if (!form.userAgent.trim()) nextErrors.userAgent = "User Agent is required";
@@ -199,6 +202,8 @@ export default function EditAccount() {
 
     if (form.maxDailyRuntime === "" || Number.isNaN(Number(form.maxDailyRuntime))) {
       nextErrors.maxDailyRuntime = "Max Daily Runtime must be numeric";
+    } else if (Number(form.maxDailyRuntime) < 1 || Number(form.maxDailyRuntime) > 24) {
+      nextErrors.maxDailyRuntime = "Max Daily Runtime must be between 1 and 24";
     }
 
     setErrors(nextErrors);
@@ -217,9 +222,8 @@ export default function EditAccount() {
     try {
       const runtimeWindow = buildRuntimeWindowFromClockTimes(form.runFromTime, form.runToTime);
       const runtimeRange = getRuntimeWindowClockRange(runtimeWindow);
-      await updateAccount(id, {
+      const payload = {
         email: form.email.trim(),
-        password: form.password,
         proxyHost: form.proxyHost.trim(),
         proxyPort: Number(form.proxyPort),
         proxyUsername: form.proxyUsername.trim(),
@@ -239,7 +243,11 @@ export default function EditAccount() {
         randomMaxMinutes: Number(form.randomMax),
         maxDailyRuntime: Number(form.maxDailyRuntime),
         maxDailyRuntimeHours: Number(form.maxDailyRuntime)
-      });
+      };
+      // Only send the password when the user actually typed a new one;
+      // otherwise the existing password is kept unchanged.
+      if (form.password) payload.password = form.password;
+      await updateAccount(id, payload);
 
       setSuccessMessage("Account updated successfully.");
       showToast("Account updated", "success");

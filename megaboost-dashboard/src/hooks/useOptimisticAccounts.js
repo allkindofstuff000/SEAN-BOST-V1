@@ -102,8 +102,14 @@ export default function useOptimisticAccounts({
   const accountsRef = useRef(accounts || []);
   const pendingMutationByAccountRef = useRef(new Map());
   const queueStateRef = useRef(INITIAL_QUEUE_STATE);
+  // Guards a bulk (start-all / stop-all) operation. Bulk ops don't go through
+  // the mutation queue, so without this a user could fire per-row actions or a
+  // second bulk op concurrently and clobber state. The ref is for synchronous
+  // reads (during render); the state drives the re-render.
+  const bulkRunningRef = useRef(false);
 
   const [queueState, setQueueState] = useState(INITIAL_QUEUE_STATE);
+  const [isBulkRunning, setIsBulkRunning] = useState(false);
 
   useEffect(() => {
     accountsRef.current = accounts || [];
@@ -142,13 +148,16 @@ export default function useOptimisticAccounts({
 
   const isAccountPending = useCallback((accountId) => {
     if (!accountId) return false;
+    // During a bulk op every account is effectively pending — block per-row
+    // actions so they can't race the in-flight start-all/stop-all.
+    if (bulkRunningRef.current) return true;
 
     const fromQueue = Boolean(queueStateRef.current.pendingByKey[accountId]);
     const fromMeta = pendingMutationByAccountRef.current.has(accountId);
     return fromQueue || fromMeta;
   }, []);
 
-  const isGlobalPending = queueState.running > 0 || queueState.queued > 0;
+  const isGlobalPending = queueState.running > 0 || queueState.queued > 0 || isBulkRunning;
 
   const handleError = useCallback(
     (prefix, error) => {
@@ -695,6 +704,8 @@ export default function useOptimisticAccounts({
         })
       );
 
+      bulkRunningRef.current = true;
+      setIsBulkRunning(true);
       try {
         const response = await api.post(
           "/api/accounts/start-all",
@@ -746,6 +757,9 @@ export default function useOptimisticAccounts({
 
         handleError("Failed to start all accounts", error);
         throw error;
+      } finally {
+        bulkRunningRef.current = false;
+        setIsBulkRunning(false);
       }
     },
     [ensureLicenseAllows, handleError, setAccounts]
@@ -786,6 +800,8 @@ export default function useOptimisticAccounts({
         })
       );
 
+      bulkRunningRef.current = true;
+      setIsBulkRunning(true);
       try {
         const response = await api.post(
           "/api/accounts/stop-all",
@@ -837,6 +853,9 @@ export default function useOptimisticAccounts({
 
         handleError("Failed to stop all accounts", error);
         throw error;
+      } finally {
+        bulkRunningRef.current = false;
+        setIsBulkRunning(false);
       }
     },
     [handleError, setAccounts]

@@ -283,6 +283,8 @@ function StatusBadge({ status }) {
     "stopped",
     "crashed",
     "error",
+    "banned",
+    "paused",
     "verification_failed",
     "2fa_failed",
     "awaiting_2fa",
