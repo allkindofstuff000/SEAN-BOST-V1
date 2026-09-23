@@ -3670,6 +3670,15 @@ async function startBumpLoop(page, account, state = { stopped: false }, options 
     if (result.outcome === "success" || result.outcome === "stalled_recovered") {
       state.lastSuccessfulTaskAt = completedAt;
       runtimeStatus = "bumping";
+      // Reset the PERSISTENT failure counter on any successful cycle so that
+      // occasional transient failures spread over a long run never accumulate
+      // to FAILURE_LIMIT and trigger a false-positive permanent "blocked" (which
+      // also stops every proxy-peer). Previously this only reset on (re)start.
+      await updateWorkerState(account._id, {
+        failureCount: 0,
+        lastErrorMessage: null,
+        lastErrorAt: null
+      }).catch(() => null);
     } else if (result.outcome === "cooldown") {
       runtimeStatus = "waiting_cooldown";
     } else if (result.outcome === "retryable_failure") {
@@ -4410,7 +4419,15 @@ async function startBumpLoop(page, account, state = { stopped: false }, options 
         if (!keepRunning || state.stopped) break;
         continue;
       } catch (error) {
-        if (state.stopped || page.isClosed()) break;
+        // Only exit cleanly (→ "completed") when we were explicitly asked to stop.
+        if (state.stopped) break;
+        // If the browser/page died unexpectedly (crash / OOM-kill / "target
+        // closed") while NOT stopping, do NOT silently mark the account
+        // "completed" (which is never auto-recovered). Rethrow so it routes to
+        // handleWorkerFailure and gets rescheduled/restarted.
+        if (typeof page?.isClosed === "function" && page.isClosed()) {
+          throw error || new Error("Browser closed unexpectedly");
+        }
         if (String(error?.type || "").toLowerCase() === "banned") {
           await finalizeCycle(
             createCycleResult({
@@ -5443,23 +5460,27 @@ async function handleWorkerFailure(account, error, options = {}) {
       nextDelayMs: WORKER_STALL_RECOVERY_DELAY_MS
     });
 
-    const retryTimer = setTimeout(async () => {
-      retryTimers.delete(accountId);
-      if (isStopRequested(accountId)) return;
+    const retryTimer = setTimeout(() => {
+      (async () => {
+        retryTimers.delete(accountId);
+        if (isStopRequested(accountId)) return;
 
-      const latestAccount = await Account.findOne(
-        scopedUserId
-          ? {
-              _id: accountId,
-              userId: scopedUserId
-            }
-          : { _id: accountId }
-      );
-      if (!latestAccount || latestAccount.workerState?.blockedReason) {
-        return;
-      }
+        const latestAccount = await Account.findOne(
+          scopedUserId
+            ? {
+                _id: accountId,
+                userId: scopedUserId
+              }
+            : { _id: accountId }
+        );
+        if (!latestAccount || latestAccount.workerState?.blockedReason) {
+          return;
+        }
 
-      await requestStart(latestAccount, { ip, userId: scopedUserId || latest.userId });
+        await requestStart(latestAccount, { ip, userId: scopedUserId || latest.userId });
+      })().catch((err) => {
+        console.error(`[WORKER] Stall-recovery retry failed for ${accountId}: ${err?.message || err}`);
+      });
     }, WORKER_STALL_RECOVERY_DELAY_MS);
 
     retryTimers.set(accountId, retryTimer);
@@ -5695,23 +5716,27 @@ async function handleWorkerFailure(account, error, options = {}) {
   });
 
   clearRetryTimer(accountId);
-  const retryTimer = setTimeout(async () => {
-    retryTimers.delete(accountId);
-    if (isStopRequested(accountId)) return;
+  const retryTimer = setTimeout(() => {
+    (async () => {
+      retryTimers.delete(accountId);
+      if (isStopRequested(accountId)) return;
 
-    const latestAccount = await Account.findOne(
-      scopedUserId
-        ? {
-            _id: accountId,
-            userId: scopedUserId
-          }
-        : { _id: accountId }
-    );
-    if (!latestAccount || latestAccount.workerState?.blockedReason) {
-      return;
-    }
+      const latestAccount = await Account.findOne(
+        scopedUserId
+          ? {
+              _id: accountId,
+              userId: scopedUserId
+            }
+          : { _id: accountId }
+      );
+      if (!latestAccount || latestAccount.workerState?.blockedReason) {
+        return;
+      }
 
-    await requestStart(latestAccount, { ip, userId: scopedUserId });
+      await requestStart(latestAccount, { ip, userId: scopedUserId });
+    })().catch((err) => {
+      console.error(`[WORKER] Retry restart failed for ${accountId}: ${err?.message || err}`);
+    });
   }, retryDelayMs);
 
   retryTimers.set(accountId, retryTimer);
@@ -6878,34 +6903,38 @@ async function submitVerificationCode(accountId, verificationCode) {
             clearTimeout(activeSession.expiryTimer);
           }
 
-          activeSession.expiryTimer = setTimeout(async () => {
-            const latestSession = pendingVerificationSessions.get(key);
-            if (!latestSession) return;
+          activeSession.expiryTimer = setTimeout(() => {
+            (async () => {
+              const latestSession = pendingVerificationSessions.get(key);
+              if (!latestSession) return;
 
-            clearPendingVerificationSession(key);
+              clearPendingVerificationSession(key);
 
-            await Account.findByIdAndUpdate(key, {
-              status: "login_failed",
-              lastError: "Verification code timeout"
-            }).catch(() => null);
-            await updateStatus(key, "login_failed", {
-              ip: latestSession.ip || ip,
-              email: latestSession.email || email
-            }).catch(() => null);
+              await Account.findByIdAndUpdate(key, {
+                status: "login_failed",
+                lastError: "Verification code timeout"
+              }).catch(() => null);
+              await updateStatus(key, "login_failed", {
+                ip: latestSession.ip || ip,
+                email: latestSession.email || email
+              }).catch(() => null);
 
-            if (typeof latestSession.onTimeout === "function") {
-              await latestSession.onTimeout();
-              return;
-            }
+              if (typeof latestSession.onTimeout === "function") {
+                await latestSession.onTimeout();
+                return;
+              }
 
-            const sessionBrowser = latestSession.browser;
-            if (sessionBrowser && typeof sessionBrowser.isConnected === "function") {
-              if (sessionBrowser.isConnected()) {
+              const sessionBrowser = latestSession.browser;
+              if (sessionBrowser && typeof sessionBrowser.isConnected === "function") {
+                if (sessionBrowser.isConnected()) {
+                  await sessionBrowser.close().catch(() => null);
+                }
+              } else if (sessionBrowser) {
                 await sessionBrowser.close().catch(() => null);
               }
-            } else if (sessionBrowser) {
-              await sessionBrowser.close().catch(() => null);
-            }
+            })().catch((err) => {
+              console.error(`[WORKER] Verification expiry handler failed for ${key}: ${err?.message || err}`);
+            });
           }, VERIFICATION_TIMEOUT_MS);
 
           pendingVerificationSessions.set(key, activeSession);
@@ -7152,34 +7181,38 @@ async function handleDeviceVerification(page, account, options = {}) {
       status: "awaiting_verification_code"
     }).catch(() => null);
 
-    const expiryTimer = setTimeout(async () => {
-      const activeSession = pendingVerificationSessions.get(accountId);
-      if (!activeSession) return;
+    const expiryTimer = setTimeout(() => {
+      (async () => {
+        const activeSession = pendingVerificationSessions.get(accountId);
+        if (!activeSession) return;
 
-      clearPendingVerificationSession(accountId);
+        clearPendingVerificationSession(accountId);
 
-      await Account.findByIdAndUpdate(accountId, {
-        status: "login_failed",
-        lastError: "Verification code timeout"
-      }).catch(() => null);
-      await updateStatus(accountId, "login_failed", {
-        ip: activeSession.ip || ip,
-        email: activeSession.email || account.email
-      }).catch(() => null);
+        await Account.findByIdAndUpdate(accountId, {
+          status: "login_failed",
+          lastError: "Verification code timeout"
+        }).catch(() => null);
+        await updateStatus(accountId, "login_failed", {
+          ip: activeSession.ip || ip,
+          email: activeSession.email || account.email
+        }).catch(() => null);
 
-      if (typeof activeSession.onTimeout === "function") {
-        await activeSession.onTimeout();
-        return;
-      }
+        if (typeof activeSession.onTimeout === "function") {
+          await activeSession.onTimeout();
+          return;
+        }
 
-      const sessionBrowser = activeSession.browser;
-      if (sessionBrowser && typeof sessionBrowser.isConnected === "function") {
-        if (sessionBrowser.isConnected()) {
+        const sessionBrowser = activeSession.browser;
+        if (sessionBrowser && typeof sessionBrowser.isConnected === "function") {
+          if (sessionBrowser.isConnected()) {
+            await sessionBrowser.close().catch(() => null);
+          }
+        } else if (sessionBrowser) {
           await sessionBrowser.close().catch(() => null);
         }
-      } else if (sessionBrowser) {
-        await sessionBrowser.close().catch(() => null);
-      }
+      })().catch((err) => {
+        console.error(`[WORKER] Verification expiry handler failed for ${accountId}: ${err?.message || err}`);
+      });
     }, VERIFICATION_TIMEOUT_MS);
 
     pendingVerificationSessions.set(accountId, {

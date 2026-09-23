@@ -87,18 +87,37 @@ async function launchStealthBrowser(account) {
     if (account.proxyUsername && account.proxyPassword) {
       // Proxy with authentication - use proxy-chain to handle auth
       const originalProxy = `${proxyType}://${account.proxyUsername}:${account.proxyPassword}@${account.proxyHost}:${account.proxyPort}`;
-      
-      try {
-        anonymousProxyUrl = await withTimeout(
-          proxyChain.anonymizeProxy(originalProxy),
-          PROXY_ANONYMIZE_TIMEOUT_MS,
-          'Proxy anonymize'
-        );
-        proxyUrl = anonymousProxyUrl;
-        console.log(`[PROXY] Authenticated proxy anonymized`);
-      } catch (error) {
-        console.error(`[PROXY] Failed to anonymize proxy:`, error.message);
-        proxyUrl = `${proxyType}://${account.proxyHost}:${account.proxyPort}`;
+
+      let anonymizeError = null;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          anonymousProxyUrl = await withTimeout(
+            proxyChain.anonymizeProxy(originalProxy),
+            PROXY_ANONYMIZE_TIMEOUT_MS,
+            'Proxy anonymize'
+          );
+          proxyUrl = anonymousProxyUrl;
+          anonymizeError = null;
+          console.log(`[PROXY] Authenticated proxy anonymized (attempt ${attempt})`);
+          break;
+        } catch (error) {
+          anonymizeError = error;
+          console.error(`[PROXY] Failed to anonymize proxy (attempt ${attempt}/3):`, error.message);
+          if (attempt < 3) {
+            await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+          }
+        }
+      }
+
+      if (anonymizeError) {
+        // NEVER fall back to a credential-stripped proxy URL for an
+        // authenticated proxy — that guarantees HTTP 407 on every request and
+        // cascades into repeated failures → permanent "blocked". Fail the launch
+        // as a retryable error so we simply retry later with a fresh attempt.
+        const err = new Error(`Proxy anonymize failed after retries: ${anonymizeError.message}`);
+        err.type = 'proxy_failed';
+        err.retryable = true;
+        throw err;
       }
     } else {
       // Proxy without authentication

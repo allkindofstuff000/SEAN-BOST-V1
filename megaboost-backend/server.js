@@ -305,13 +305,17 @@ process.on("SIGTERM", () => {
   });
 });
 
+// NOTE: Do NOT tear down the process (and every running worker/account) on a
+// stray async error. A single unhandled rejection or uncaught exception is
+// almost always local to one account/request; killing the process would stop
+// the entire fleet — the opposite of what we want. Log loudly and keep running;
+// per-account watchdog/recovery heals the one bad account, and durable state
+// lives in MongoDB. Intentional shutdowns still go through SIGINT/SIGTERM.
 process.on("unhandledRejection", (reason) => {
   const message = reason instanceof Error ? reason.stack || reason.message : String(reason);
-  console.error(`[PROCESS] Unhandled rejection: ${message}`);
-  shutdown("UNHANDLED_REJECTION", 1).catch(() => process.exit(1));
+  console.error(`[PROCESS] Unhandled rejection (ignored, staying up): ${message}`);
 });
 
 process.on("uncaughtException", (error) => {
-  console.error(`[PROCESS] Uncaught exception: ${error.stack || error.message}`);
-  shutdown("UNCAUGHT_EXCEPTION", 1).catch(() => process.exit(1));
+  console.error(`[PROCESS] Uncaught exception (ignored, staying up): ${error.stack || error.message}`);
 });

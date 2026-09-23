@@ -135,25 +135,32 @@ exports.logout = async (_req, res) => {
 };
 
 exports.me = async (req, res) => {
-  if (!req.user?._id) {
-    return res.status(401).json({
+  try {
+    if (!req.user?._id) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required"
+      });
+    }
+
+    const user = await User.findById(req.user._id).lean();
+    if (!user || user.isActive === false) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required"
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: sanitizeUser(user)
+    });
+  } catch (error) {
+    return res.status(500).json({
       success: false,
-      message: "Authentication required"
+      message: error?.message || "Failed to load session"
     });
   }
-
-  const user = await User.findById(req.user._id).lean();
-  if (!user || user.isActive === false) {
-    return res.status(401).json({
-      success: false,
-      message: "Authentication required"
-    });
-  }
-
-  return res.status(200).json({
-    success: true,
-    data: sanitizeUser(user)
-  });
 };
 
 exports.sanitizeUser = sanitizeUser;
