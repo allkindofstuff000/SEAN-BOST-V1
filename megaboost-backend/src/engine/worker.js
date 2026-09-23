@@ -191,6 +191,14 @@ const STALE_START_RECOVERY_MS = (() => {
   if (!Number.isFinite(parsed) || parsed < 0) return 2 * 60 * 1000;
   return Math.floor(parsed);
 })();
+// How long an account may sit in a transient-terminal state (error/crashed)
+// before the recovery loop auto-restarts it. Long enough to avoid churn on a
+// genuinely-broken account, short enough to self-heal from transient causes.
+const ERROR_RECOVERY_COOLDOWN_MS = (() => {
+  const parsed = Number(process.env.WORKER_ERROR_RECOVERY_COOLDOWN_MS || 10 * 60 * 1000);
+  if (!Number.isFinite(parsed) || parsed < 60 * 1000) return 10 * 60 * 1000;
+  return Math.floor(parsed);
+})();
 const WORKER_WATCHDOG_INTERVAL_MS = (() => {
   const parsed = Number(process.env.WORKER_WATCHDOG_INTERVAL_MS || 30 * 1000);
   if (!Number.isFinite(parsed) || parsed < 5000) return 30 * 1000;
@@ -5550,40 +5558,19 @@ async function handleWorkerFailure(account, error, options = {}) {
   const failureCount = previousFailures + 1;
   const lastErrorAt = new Date();
 
-  if (failureCount >= FAILURE_LIMIT) {
-    clearRetryTimer(accountId);
-    await updateWorkerState(
-      accountId,
-      {
-        failureCount,
-        lastErrorMessage: normalizedError.message,
-        lastErrorAt,
-        nextRetryAt: null,
-        blockedReason: "Too many consecutive failures"
-      },
-      {
-        status: "blocked"
-      }
-    );
-    await updateStatus(accountId, "blocked", { ip, email }).catch(() => null);
-    await handleAccountBlocked(accountId).catch((propagationError) => {
-      console.error(
-        `[IP-BLOCK] Propagation failed for account ${accountId}:`,
-        propagationError?.message || propagationError
-      );
-    });
-    updateRuntime({
-      status: "blocked",
-      currentStep: "blocked",
-      cycleActive: false,
-      nextScheduledAt: null
-    });
-    console.error(
-      "[WORKER] Account blocked after 5 failures. Manual restart required."
+  if (failureCount === FAILURE_LIMIT) {
+    // Persistent TRANSIENT failures (nav timeout, proxy hiccup, captcha/login
+    // outage, etc.): alert once for visibility, but DO NOT permanently block the
+    // account or stop its proxy-peers. Keep retrying with capped backoff (max
+    // 15 min) so it self-heals when the underlying cause clears. Confirmed hard
+    // failures \u2014 "banned" and "credentials_invalid" \u2014 are handled by their own
+    // terminal branches above and are unaffected.
+    console.warn(
+      `[WORKER] ${email} hit ${failureCount} consecutive failures; continuing to retry (no block).`
     );
     await logActivity({
-      level: "error",
-      message: `\uD83D\uDCA5 Worker crashed | ${email} | blocked after ${failureCount} failures`,
+      level: "warning",
+      message: `\u26A0\uFE0F ${email} | ${failureCount} consecutive failures \u2014 still retrying`,
       ip,
       email,
       accountId,
@@ -5595,22 +5582,17 @@ async function handleWorkerFailure(account, error, options = {}) {
         proxy: proxyLabel
       }
     }).catch(() => null);
-    await sendTelegramEvent("account_blocked", {
+    await sendTelegramEvent("retry_scheduled", {
       userId: scopedUserId || latest.userId,
       accountId,
       email,
-      currentStep: "blocked",
-      message: "Too many consecutive worker failures",
+      message: `${failureCount} consecutive failures \u2014 still retrying`,
       metadata: {
         failureCount,
         proxy: proxyLabel
       }
     }).catch(() => null);
-    await emitWorkerEvent("worker:status", "Account blocked", {
-      failureCount
-    });
-    await processQueue();
-    return;
+    // Fall through to the normal retry-with-backoff scheduling below.
   }
 
   const retryDelayMs = calculateRetryDelayMs(failureCount);
@@ -6167,6 +6149,12 @@ async function recoverOverdueAccounts() {
     const nowMs = Date.now();
     const now = new Date(nowMs);
     const staleStartCutoff = new Date(nowMs - STALE_START_RECOVERY_MS);
+    // Transient-terminal states (error/crashed) self-heal after this cooldown,
+    // so a nav-timeout / restart-race / lost in-memory retry-timer (e.g. after a
+    // process restart) doesn't strand an account forever. Hard-blocked accounts
+    // (banned / bad credentials / stall-limit) carry a workerState.blockedReason
+    // and are still skipped below; auto-restart-off accounts are excluded here.
+    const errorRecoveryCutoff = new Date(nowMs - ERROR_RECOVERY_COOLDOWN_MS);
 
     const candidates = await Account.find({
       $or: [
@@ -6190,6 +6178,11 @@ async function recoverOverdueAccounts() {
         {
           status: { $in: ["starting", "restarting"] },
           updatedAt: { $lte: staleStartCutoff }
+        },
+        {
+          status: { $in: ["error", "crashed"] },
+          autoRestartCrashed: { $ne: false },
+          updatedAt: { $lte: errorRecoveryCutoff }
         }
       ]
     })
@@ -6206,6 +6199,8 @@ async function recoverOverdueAccounts() {
         continue;
       }
       if (isStopRequested(accountId)) continue;
+      // Don't race an in-flight in-memory retry timer (transient-failure backoff).
+      if (retryTimers.has(accountId)) continue;
 
       const queueKey = buildWorkerKey(userId, accountId);
       if (queuedAccounts.has(queueKey) || queuedAccounts.has(accountId)) {
@@ -6218,6 +6213,8 @@ async function recoverOverdueAccounts() {
         reason = "cooldown overdue";
       } else if (status === "bumping" || status === "active" || status === "running") {
         reason = "scheduled run overdue";
+      } else if (status === "error" || status === "crashed") {
+        reason = "auto-recover after cooldown";
       }
 
       console.log(
