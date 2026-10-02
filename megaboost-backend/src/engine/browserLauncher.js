@@ -85,8 +85,12 @@ async function launchStealthBrowser(account) {
     console.log(`[PROXY] Using ${proxyType.toUpperCase()} proxy: ${account.proxyHost}:${account.proxyPort}`);
     
     if (account.proxyUsername && account.proxyPassword) {
-      // Proxy with authentication - use proxy-chain to handle auth
-      const originalProxy = `${proxyType}://${account.proxyUsername}:${account.proxyPassword}@${account.proxyHost}:${account.proxyPort}`;
+      // Proxy with authentication - use proxy-chain to handle auth.
+      // URL-encode the credentials: a username/password containing @ : / # etc.
+      // would otherwise corrupt the proxy URL and fail every request forever.
+      const encUser = encodeURIComponent(account.proxyUsername);
+      const encPass = encodeURIComponent(account.proxyPassword);
+      const originalProxy = `${proxyType}://${encUser}:${encPass}@${account.proxyHost}:${account.proxyPort}`;
 
       let anonymizeError = null;
       for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -145,7 +149,18 @@ async function launchStealthBrowser(account) {
     '--no-first-run',
     '--no-zygote',
     '--disable-gpu',
-    
+
+    // SEANBOOST marker so the boot-time orphan sweep can identify + kill Chromes
+    // leaked by a hard Node kill (OOM/SIGKILL). Chrome ignores unknown switches.
+    '--seanboost-chrome=1',
+    // Bound disk use: tiny caches + no crash dumps (which otherwise pile up in
+    // an OOM/restart loop).
+    '--disk-cache-size=1',
+    '--media-cache-size=1',
+    '--disable-breakpad',
+    '--disable-crash-reporter',
+
+
     // Disable automation flags
     '--disable-blink-features=AutomationControlled',
     '--disable-features=IsolateOrigins,site-per-process',

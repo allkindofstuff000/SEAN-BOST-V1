@@ -2387,6 +2387,21 @@ function clearStateTimeout(state, timerField) {
   state[timerField] = null;
 }
 
+// Wake a worker that is parked in waitWithStop's scheduled sleep. Callers that
+// want to interrupt the inter-bump wait (stop, stall-recovery, reschedule) MUST
+// use this instead of a bare clearStateTimeout: clearing the timer alone leaves
+// the awaited promise unresolved, stranding the loop forever (it never re-checks
+// state.stopped / pendingScheduleOverride).
+function interruptScheduledWait(state) {
+  if (!state) return;
+  clearStateTimeout(state, "scheduledWaitTimer");
+  const wake = state.scheduledWaitResolve;
+  state.scheduledWaitResolve = null;
+  if (typeof wake === "function") {
+    wake();
+  }
+}
+
 async function waitWithStop(state, waitMs) {
   let remainingMs = Math.max(0, Math.floor(waitMs || 0));
   let interruptedByReschedule = false;
@@ -2395,11 +2410,18 @@ async function waitWithStop(state, waitMs) {
     const step = Math.min(remainingMs, 5000);
     await new Promise((resolve) => {
       clearStateTimeout(state, "scheduledWaitTimer");
-      state.scheduledWaitTimer = setTimeout(resolve, step);
+      // Expose the resolver so interruptScheduledWait() can wake us early
+      // (stop/reschedule/stall) instead of stranding this await.
+      state.scheduledWaitResolve = resolve;
+      state.scheduledWaitTimer = setTimeout(() => {
+        state.scheduledWaitResolve = null;
+        resolve();
+      }, step);
       if (typeof state.scheduledWaitTimer?.unref === "function") {
         state.scheduledWaitTimer.unref();
       }
     });
+    state.scheduledWaitResolve = null;
     clearStateTimeout(state, "scheduledWaitTimer");
 
     if (state.pendingScheduleOverride) {
@@ -4676,7 +4698,7 @@ async function startWorker(account, options = {}) {
     browserClosed = true;
     stopWorkerHeartbeat(account, state);
     stopWorkerWatchdog();
-    clearStateTimeout(state, "scheduledWaitTimer");
+    interruptScheduledWait(state);
     if (state.bumpWatchdogTimer) {
       clearInterval(state.bumpWatchdogTimer);
       state.bumpWatchdogTimer = null;
@@ -4694,16 +4716,34 @@ async function startWorker(account, options = {}) {
       return;
     }
 
+    const proc = typeof browser.process === "function" ? browser.process() : null;
+
     try {
-      if (typeof browser.isConnected === "function") {
-        if (browser.isConnected()) {
-          await browser.close();
-        }
-      } else {
-        await browser.close();
-      }
+      // Always attempt the close (even if isConnected() is false — a dropped CDP
+      // socket with a live process would otherwise leak Chrome). Race against a
+      // timeout so a hung close doesn't hold the worker + its concurrency slot
+      // (a stuck CDP close can otherwise wait up to the 180s protocol timeout).
+      await Promise.race([
+        browser.close(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("browser close timeout")), 10000)
+        )
+      ]);
     } catch (browserError) {
-      console.error("[BROWSER] Close failed:", browserError.message);
+      console.error("[BROWSER] Close failed/timeout:", browserError.message);
+    }
+
+    // Hard-kill the Chrome process group if it is still alive after the close.
+    if (proc && proc.exitCode === null && proc.signalCode === null) {
+      try {
+        process.kill(-proc.pid, "SIGKILL"); // Chrome is launched detached → own group
+      } catch {
+        try {
+          proc.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
     }
   };
 
@@ -4714,7 +4754,11 @@ async function startWorker(account, options = {}) {
 
     state.recoveryTriggered = true;
     state.waitingForRecovery = true;
-    clearStateTimeout(state, "scheduledWaitTimer");
+    // Stop the local loop so that when the scheduled wait is woken (below /via
+    // closeBrowser) it exits cleanly instead of running a cycle on the browser
+    // we're about to close. notifyExit(stalled) below still drives the retry.
+    state.stopped = true;
+    interruptScheduledWait(state);
     await closeBrowser();
     await notifyExit(
       createWorkerError("stalled", String(reason || `Worker stalled for ${account.email}`))
@@ -4923,7 +4967,7 @@ async function startWorker(account, options = {}) {
       lastProgressAt: state.lastProgressAt
     });
 
-    clearStateTimeout(state, "scheduledWaitTimer");
+    interruptScheduledWait(state);
 
     console.log(
       `[SCHEDULER] Reschedule requested for ${account.email}. next=${nextBumpAt.toISOString()} reason=${String(
@@ -5033,6 +5077,11 @@ async function startWorker(account, options = {}) {
         if (!state.stopped) {
           setWorkerStep(state, "bump_loop_error", page);
           console.error(`[BUMP] Loop crashed for ${account.email}:`, error.message);
+          // Close the failed Chrome BEFORE failure handling runs (notifyExit →
+          // handleWorkerFailure → processQueue can launch the next worker); keeps
+          // live browsers from briefly exceeding MAX_CONCURRENCY. Idempotent, so
+          // the .finally closeBrowser becomes a no-op.
+          await closeBrowser();
           await notifyExit(
             createWorkerError(
               inferWorkerErrorType(error?.message),
@@ -6183,6 +6232,15 @@ async function recoverOverdueAccounts() {
           status: { $in: ["error", "crashed"] },
           autoRestartCrashed: { $ne: false },
           updatedAt: { $lte: errorRecoveryCutoff }
+        },
+        {
+          // Transient-failure retries live only in an in-memory setTimeout; a
+          // process restart loses them. Back them up from the persisted
+          // workerState.nextRetryAt so proxy_failed/login_failed/retry_scheduled
+          // accounts still self-heal after a restart. (blockedReason-carrying
+          // hard failures are skipped in the loop below.)
+          status: { $in: ["proxy_failed", "login_failed", "retry_scheduled"] },
+          "workerState.nextRetryAt": { $ne: null, $lte: now }
         }
       ]
     })
@@ -6215,6 +6273,12 @@ async function recoverOverdueAccounts() {
         reason = "scheduled run overdue";
       } else if (status === "error" || status === "crashed") {
         reason = "auto-recover after cooldown";
+      } else if (
+        status === "proxy_failed" ||
+        status === "login_failed" ||
+        status === "retry_scheduled"
+      ) {
+        reason = "retry overdue";
       }
 
       console.log(
@@ -7248,6 +7312,28 @@ async function handleDeviceVerification(page, account, options = {}) {
   }
 }
 
+// Before we start (re)launching, kill any Chromes orphaned by a prior HARD kill
+// of this process (OOM-killer / SIGKILL / V8 abort skip the normal exit hooks).
+// Only chrome-named processes carrying our --seanboost-chrome marker are killed,
+// so the sh/pkill wrappers and anything else are untouched. Prevents memory
+// doubling → OOM crash-loop after a restart.
+function sweepOrphanChromes() {
+  if (String(process.env.PROCESS_ROLE || "").toLowerCase() !== "worker") return;
+  try {
+    const { exec } = require("child_process");
+    const cmd =
+      "for pid in $(pgrep -f -- '--seanboost-chrome=1' 2>/dev/null); do " +
+      "if grep -qi chrom /proc/$pid/comm 2>/dev/null; then kill -9 \"$pid\" 2>/dev/null; fi; done; " +
+      "rm -rf /tmp/puppeteer_dev_chrome_profile-* 2>/dev/null";
+    exec(cmd, { timeout: 15000 }, () => {
+      console.log("[BOOT] Orphan-Chrome sweep complete");
+    });
+  } catch (error) {
+    console.warn("[BOOT] Orphan-Chrome sweep failed:", error.message);
+  }
+}
+
+sweepOrphanChromes();
 startRecoveryLoop();
 
 module.exports = {
