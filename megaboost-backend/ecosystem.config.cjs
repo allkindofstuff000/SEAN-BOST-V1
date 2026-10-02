@@ -6,7 +6,13 @@ module.exports = {
       instances: 1,
       autorestart: true,
       watch: false,
-      max_memory_restart: "6G",
+      // Cap the NODE process RSS (engine + in-process proxy-chain servers; the
+      // headless Chromes are separate OS processes and are NOT counted here).
+      // Keep max_memory_restart safely above the V8 heap cap so PM2 does a clean
+      // restart before V8 would abort (which would orphan every child Chrome).
+      max_memory_restart: "2G",
+      node_args: "--max-old-space-size=1536",
+      kill_timeout: 20000,
       env: {
         NODE_ENV: "production",
         HOST: "127.0.0.1",

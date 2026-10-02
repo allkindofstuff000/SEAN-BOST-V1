@@ -175,7 +175,11 @@ export function AccountsProvider({ children }) {
     maxConcurrency: Number(import.meta.env.VITE_MUTATION_MAX_CONCURRENCY || 5)
   });
 
+  const fetchInFlightRef = useRef(false);
+
   const fetchAccounts = useCallback(async () => {
+    if (fetchInFlightRef.current) return; // skip overlapping polls
+    fetchInFlightRef.current = true;
     try {
       setError("");
       const response = await api.get("/api/accounts");
@@ -190,6 +194,7 @@ export function AccountsProvider({ children }) {
     } catch (err) {
       setError(err.response?.data?.message || err.message || "Failed to load accounts");
     } finally {
+      fetchInFlightRef.current = false;
       setLoading(false);
     }
   }, [mergeServerAccounts]);
@@ -202,12 +207,30 @@ export function AccountsProvider({ children }) {
   }, [fetchAccounts, fetchLicenseInfo]);
 
   useEffect(() => {
-    const pollMs = Number(import.meta.env.VITE_ACCOUNTS_POLL_MS || 4000);
-    const intervalId = setInterval(() => {
-      fetchAccounts();
-    }, Number.isNaN(pollMs) ? 4000 : pollMs);
+    // The socket pushes real-time account:update events, so this poll is only a
+    // periodic reconcile. Default to 30s (was 4s), skip while the tab is hidden,
+    // and refetch immediately when the tab becomes visible again.
+    const pollMs = Number(import.meta.env.VITE_ACCOUNTS_POLL_MS || 30000);
+    const effectiveMs = Number.isNaN(pollMs) ? 30000 : pollMs;
 
-    return () => clearInterval(intervalId);
+    const intervalId = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      fetchAccounts();
+    }, effectiveMs);
+
+    const onVisible = () => {
+      if (typeof document !== "undefined" && !document.hidden) fetchAccounts();
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisible);
+    }
+
+    return () => {
+      clearInterval(intervalId);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisible);
+      }
+    };
   }, [fetchAccounts]);
 
   useEffect(() => {

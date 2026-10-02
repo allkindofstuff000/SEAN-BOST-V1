@@ -518,7 +518,12 @@ exports.getAccounts = async (req, res) => {
     if (!ensureDbConnected(res)) return;
 
     const accountLimit = await resolveUserAccountLimit(req);
-    const accounts = await Account.find(getScopedFilter(req)).sort({ createdAt: -1 });
+    // Never ship account/proxy passwords to the browser (this list is polled
+    // every few seconds). .lean() also skips mongoose hydration of N docs.
+    const accounts = await Account.find(getScopedFilter(req))
+      .select("-password -proxyPassword")
+      .sort({ createdAt: -1 })
+      .lean();
 
     return res.status(200).json({
       success: true,

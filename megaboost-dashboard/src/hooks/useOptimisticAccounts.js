@@ -70,6 +70,30 @@ function isCancelled(error) {
   return error instanceof MutationCancelledError || error?.code === "MUTATION_CANCELLED";
 }
 
+// Compare two values with ONE extra level of depth for plain objects. The
+// account docs from /api/accounts always carry nested `connectionTest` and
+// `workerState` objects which get fresh identities after JSON.parse on every
+// poll; a pure `!==` check therefore always reported "changed" and re-rendered
+// every row. Comparing those nested objects shallowly lets unchanged polls be
+// recognized as equal so the row memo can bail out.
+function valuesEqual(a, b) {
+  if (a === b) return true;
+  if (
+    a && b &&
+    typeof a === "object" && typeof b === "object" &&
+    !Array.isArray(a) && !Array.isArray(b)
+  ) {
+    const ak = Object.keys(a);
+    const bk = Object.keys(b);
+    if (ak.length !== bk.length) return false;
+    for (let i = 0; i < ak.length; i += 1) {
+      if (a[ak[i]] !== b[ak[i]]) return false;
+    }
+    return true;
+  }
+  return false;
+}
+
 function shallowEqualObjects(left, right) {
   if (left === right) return true;
   if (!left || !right) return false;
@@ -80,7 +104,7 @@ function shallowEqualObjects(left, right) {
 
   for (let i = 0; i < leftKeys.length; i += 1) {
     const key = leftKeys[i];
-    if (left[key] !== right[key]) {
+    if (!valuesEqual(left[key], right[key])) {
       return false;
     }
   }
@@ -920,6 +944,15 @@ export default function useOptimisticAccounts({
             merged.unshift(account);
           }
         });
+
+        // If nothing actually changed, return the SAME array reference so React
+        // skips the state update (and the whole-list re-render) entirely.
+        if (
+          merged.length === prev.length &&
+          merged.every((item, index) => item === prev[index])
+        ) {
+          return prev;
+        }
 
         return merged;
       });

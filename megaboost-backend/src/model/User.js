@@ -48,7 +48,8 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-userSchema.index({ email: 1 });
-userSchema.index({ username: 1 });
+// (email & username already get unique indexes from their field definitions;
+// re-declaring them here created duplicate/conflicting index specs that can
+// abort syncIndexes with IndexKeySpecsConflict.)
 
 module.exports = mongoose.model("User", userSchema);

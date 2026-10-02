@@ -102,7 +102,38 @@ async function buildStatsSnapshot(userId) {
   return normalizeStats(rows);
 }
 
-async function emitLogEvents(log, io = global.io) {
+// Debounce the per-user stats aggregate: a "Start All" burst (or steady worker
+// activity) used to run one full Log.aggregate PER log write, on the write path.
+// Collapse those into at most one aggregate per user per window.
+const STATS_DEBOUNCE_MS = 3000;
+const statsTimers = new Map();
+
+function scheduleStatsEmit(userId, io) {
+  const uid = normalizeUserId(userId);
+  if (!uid || statsTimers.has(uid)) {
+    return;
+  }
+
+  const timer = setTimeout(() => {
+    statsTimers.delete(uid);
+    (async () => {
+      const stats = await buildStatsSnapshot(uid);
+      const activeIo = io || global.io;
+      if (activeIo) {
+        emitToUser(activeIo, uid, "stats-update", stats);
+      } else {
+        await emitToUserEvent(uid, "stats-update", stats).catch(() => null);
+      }
+    })().catch((error) => {
+      console.error("[LOG] Failed to emit stats update:", error.message);
+    });
+  }, STATS_DEBOUNCE_MS);
+
+  if (typeof timer.unref === "function") timer.unref();
+  statsTimers.set(uid, timer);
+}
+
+function emitLogEvents(log, io = global.io) {
   if (!log) {
     return;
   }
@@ -116,20 +147,11 @@ async function emitLogEvents(log, io = global.io) {
     emitToUser(io, userId, "new-log", log);
     emitToUser(io, userId, "log:new", log);
   } else {
-    await emitToUserEvent(userId, "new-log", log).catch(() => null);
-    await emitToUserEvent(userId, "log:new", log).catch(() => null);
+    emitToUserEvent(userId, "new-log", log).catch(() => null);
+    emitToUserEvent(userId, "log:new", log).catch(() => null);
   }
 
-  try {
-    const stats = await buildStatsSnapshot(userId);
-    if (io) {
-      emitToUser(io, userId, "stats-update", stats);
-    } else {
-      await emitToUserEvent(userId, "stats-update", stats).catch(() => null);
-    }
-  } catch (error) {
-    console.error("[LOG] Failed to emit stats update:", error.message);
-  }
+  scheduleStatsEmit(userId, io);
 }
 
 function normalizeMetadata(metadata) {
@@ -166,9 +188,16 @@ async function createActivityLog(payload, options = {}) {
     throw new Error("Activity log message is required");
   }
 
+  // Do NOT persist heartbeat keepalives. The worker emits them as
+  // "Heartbeat <status>/<step>: <email>" (plus a live socket event), so the
+  // previous exact-string filter missed them and they were flooding the logs
+  // collection (144+ rows/day/account) — the main driver of log bloat + the
+  // per-write aggregate lag.
   const normalizedMessage = message.toLowerCase();
   if (
+    payload?.metadata?.heartbeat === true ||
     normalizedMessage === "worker heartbeat" ||
+    normalizedMessage.startsWith("heartbeat ") ||
     normalizedMessage.includes("[heartbeat]") ||
     normalizedMessage.includes("worker:heartbeat")
   ) {
@@ -208,12 +237,18 @@ async function createActivityLog(payload, options = {}) {
   const created = await Log.create(logPayload);
   const plainLog = created?.toObject ? created.toObject() : created;
 
+  // Fire-and-forget: keep the (awaited) worker path off the Telegram network
+  // call and the stats aggregate. Both have their own error handling.
   if (options.telegram !== false) {
-    await sendTelegramFromLog(plainLog).catch(() => null);
+    sendTelegramFromLog(plainLog).catch(() => null);
   }
 
   if (options.emit !== false) {
-    await emitLogEvents(plainLog, options.io);
+    try {
+      emitLogEvents(plainLog, options.io);
+    } catch (error) {
+      console.error("[LOG] Failed to emit log events:", error.message);
+    }
   }
 
   return plainLog;

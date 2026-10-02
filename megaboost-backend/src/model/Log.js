@@ -5,15 +5,13 @@ const logSchema = new mongoose.Schema(
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
-      index: true
+      required: true
     },
 
     level: {
       type: String,
       enum: ["success", "warning", "error", "info"],
-      required: true,
-      index: true
+      required: true
     },
 
     message: {
@@ -23,13 +21,11 @@ const logSchema = new mongoose.Schema(
     },
 
     email: {
-      type: String,
-      index: true
+      type: String
     },
 
     ip: {
-      type: String,
-      index: true
+      type: String
     },
 
     accountId: {
@@ -46,13 +42,16 @@ const logSchema = new mongoose.Schema(
   }
 );
 
-// Text index for search in message/email.
-logSchema.index({ message: "text", email: "text" });
-// Newest-first query index.
-logSchema.index({ userId: 1, createdAt: -1 });
-// Common filter + sort index.
-logSchema.index({ userId: 1, level: 1, createdAt: -1 });
-// Common email filter + sort index.
-logSchema.index({ userId: 1, email: 1, createdAt: -1 });
+// Tenant-scoped text search (message/email). Only one text index per collection.
+logSchema.index({ userId: 1, message: "text", email: "text" }, { name: "userId_text" });
+// Newest-first list — includes _id so the `.sort({ createdAt:-1, _id:-1 })` the
+// controller uses is fully covered by the index (no in-memory SORT stage).
+logSchema.index({ userId: 1, createdAt: -1, _id: -1 });
+// Level filter + sort.
+logSchema.index({ userId: 1, level: 1, createdAt: -1, _id: -1 });
+// Email filter + sort.
+logSchema.index({ userId: 1, email: 1, createdAt: -1, _id: -1 });
+// Auto-expire logs after 30 days (retention) so the collection stays bounded.
+logSchema.index({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 30 });
 
 module.exports = mongoose.model("Log", logSchema);
