@@ -11,12 +11,13 @@ module.exports = {
       // Keep max_memory_restart safely above the V8 heap cap so PM2 does a clean
       // restart before V8 would abort (which would orphan every child Chrome).
       max_memory_restart: "2G",
-      node_args: "--max-old-space-size=1536",
       kill_timeout: 20000,
       env: {
         NODE_ENV: "production",
         HOST: "127.0.0.1",
         PORT: "5000",
+        // V8 heap cap via NODE_OPTIONS (pm2 cluster mode ignores node_args).
+        NODE_OPTIONS: "--max-old-space-size=1536",
         // Single-box topology: run the worker engine IN-PROCESS (recovery loop
         // included) instead of delegating to a remote worker on :5001 that we
         // never launch. Without this, PROCESS_ROLE defaults to "api" in
